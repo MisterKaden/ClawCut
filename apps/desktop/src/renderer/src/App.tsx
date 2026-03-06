@@ -13,6 +13,8 @@ import type {
   ToolchainStatus
 } from "@clawcut/ipc";
 
+import { createPreviewLoadTarget, previewController } from "./preview-controller";
+import { PreviewPanel } from "./preview-panel";
 import { TimelineEditor } from "./timeline-editor";
 
 interface OperationState {
@@ -243,6 +245,8 @@ export function App() {
   const [toolchain, setToolchain] = useState<ToolchainStatus | null>(null);
   const [snapshot, setSnapshot] = useState<EditorSessionSnapshot | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [operationState, setOperationState] = useState<OperationState>({
     kind: "idle",
     message: null
@@ -264,6 +268,8 @@ export function App() {
   useEffect(() => {
     if (!snapshot) {
       setSelectedItemId(null);
+      setSelectedTrackId(null);
+      setSelectedClipId(null);
       return;
     }
 
@@ -273,6 +279,28 @@ export function App() {
 
     setSelectedItemId(snapshot.libraryItems[0]?.id ?? null);
   }, [selectedItemId, snapshot]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      void previewController.executeCommand({
+        type: "UnloadTimelinePreview"
+      });
+      return;
+    }
+
+    void previewController.executeCommand({
+      type: "LoadTimelinePreview",
+      target: createPreviewLoadTarget(snapshot),
+      preservePlayhead: true
+    });
+  }, [snapshot]);
+
+  useEffect(() => {
+    previewController.setSelection({
+      selectedClipId,
+      selectedTrackId
+    });
+  }, [selectedClipId, selectedTrackId]);
 
   const refreshSnapshotSilently = useEffectEvent(async (directory: string) => {
     try {
@@ -515,12 +543,13 @@ export function App() {
         <div className="hero__backdrop" />
         <div className="hero__masthead">
           <div>
-            <p className="eyebrow">Clawcut / Stage 3 editing core</p>
-            <h1>Own the timeline, route every edit through commands, and keep state trustworthy.</h1>
+            <p className="eyebrow">Clawcut / Stage 4 preview engine</p>
+            <h1>Preview the timeline through a real engine, not a pile of UI timers.</h1>
             <p className="lede">
-              Stage 3 keeps the Stage 2 ingest pipeline intact, then layers on the
-              command engine, timeline model, undo/redo, and a first internal API
-              surface that OpenClaw can drive later.
+              Stage 4 keeps the Stage 3 command and timeline core intact, then adds
+              a dedicated PreviewEngine with transport controls, scrubbing, proxy-aware
+              source selection, and machine-readable preview state that OpenClaw can
+              control later.
             </p>
           </div>
 
@@ -605,7 +634,7 @@ export function App() {
               <strong>
                 {operationState.kind === "working"
                   ? operationState.message
-                  : "Ready for project, media ingest, and command-driven edits"}
+                  : "Ready for project, ingest, command-driven edits, and preview playback"}
               </strong>
               {operationState.kind === "error" && operationState.message ? (
                 <p className="status-panel__error">{operationState.message}</p>
@@ -648,6 +677,8 @@ export function App() {
           </section>
         </div>
       </section>
+
+      <PreviewPanel />
 
       <section className="workspace">
         <article
@@ -906,6 +937,13 @@ export function App() {
       <TimelineEditor
         onExecuteCommand={handleExecuteEditorCommand}
         selectedMediaItem={selectedItem}
+        selectedTrackId={selectedTrackId}
+        selectedClipId={selectedClipId}
+        onSelectTrack={setSelectedTrackId}
+        onSelectClip={(clipId, trackId) => {
+          setSelectedClipId(clipId);
+          setSelectedTrackId(trackId);
+        }}
         snapshot={snapshot}
       />
 

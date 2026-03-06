@@ -46,12 +46,17 @@ Acceptance criteria:
 
 ## Stage 4: Preview
 
+Status: complete
+
 Acceptance criteria:
 
 - `PreviewEngine` backs transport controls
-- scrubbing and frame step work
+- play, pause, seek, scrub, and frame step work through preview commands
+- preview uses proxies intelligently and reports source mode explicitly
 - safe zones and overlay rendering are visible
-- selected-range accurate preview cache exists behind the preview boundary
+- sequential clip preview respects trims and gaps
+- machine-readable preview state is queryable for future OpenClaw control
+- selected-range accurate preview cache exists as an intentional hook behind the preview boundary
 
 ## Stage 5: Render compiler
 

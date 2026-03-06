@@ -6,10 +6,6 @@ import {
   type MouseEvent as ReactMouseEvent
 } from "react";
 
-import type {
-  ExecuteEditorCommandResult,
-  EditorSessionSnapshot
-} from "@clawcut/ipc";
 import type { EditorCommand, MediaItem } from "@clawcut/domain";
 import {
   getTimelineClipDurationUs,
@@ -18,10 +14,20 @@ import {
   type TimelineClip,
   type TimelineTrack
 } from "@clawcut/domain";
+import type {
+  EditorSessionSnapshot,
+  ExecuteEditorCommandResult
+} from "@clawcut/ipc";
+
+import { previewController, usePreviewState } from "./preview-controller";
 
 interface TimelineEditorProps {
   snapshot: EditorSessionSnapshot | null;
   selectedMediaItem: MediaItem | null;
+  selectedTrackId: string | null;
+  selectedClipId: string | null;
+  onSelectTrack(trackId: string | null): void;
+  onSelectClip(clipId: string | null, trackId: string | null): void;
   onExecuteCommand: (
     command: EditorCommand,
     message: string
@@ -110,27 +116,38 @@ function clipLabel(clip: TimelineClip, mediaItem: MediaItem | null): string {
   return mediaItem?.displayName ?? clip.mediaItemId;
 }
 
+function isClipUnderPlayhead(clip: TimelineClip, playheadUs: number): boolean {
+  return clip.timelineStartUs <= playheadUs && playheadUs < getTimelineClipEndUs(clip);
+}
+
 export function TimelineEditor({
   snapshot,
   selectedMediaItem,
+  selectedTrackId,
+  selectedClipId,
+  onSelectTrack,
+  onSelectClip,
   onExecuteCommand
 }: TimelineEditorProps) {
-  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const previewState = usePreviewState();
   const [editorMessage, setEditorMessage] = useState<string | null>(null);
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
   const pixelsPerUs = snapshot ? timelineScalePxPerUs(snapshot.timeline.zoom) : 0;
   const timelineDurationUs = snapshot
     ? Math.max(getTimelineEndUs(snapshot.timeline) + 2_000_000, 12_000_000)
     : 12_000_000;
+  const currentPlayheadUs =
+    snapshot && previewState.loaded && previewState.timelineId === snapshot.timeline.id
+      ? previewState.playheadUs
+      : snapshot?.timeline.playheadUs ?? 0;
   const timelineWidth = useMemo(() => {
     return Math.max(720, Math.round(timelineDurationUs * Math.max(pixelsPerUs, 0.00012)) + 96);
   }, [pixelsPerUs, timelineDurationUs]);
 
   useEffect(() => {
     if (!snapshot) {
-      setSelectedTrackId(null);
-      setSelectedClipId(null);
+      onSelectTrack(null);
+      onSelectClip(null, null);
       return;
     }
 
@@ -138,8 +155,8 @@ export function TimelineEditor({
       return;
     }
 
-    setSelectedTrackId(snapshot.timeline.trackOrder[0] ?? null);
-  }, [selectedTrackId, snapshot]);
+    onSelectTrack(snapshot.timeline.trackOrder[0] ?? null);
+  }, [onSelectClip, onSelectTrack, selectedTrackId, snapshot]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -150,8 +167,8 @@ export function TimelineEditor({
       return;
     }
 
-    setSelectedClipId(null);
-  }, [selectedClipId, snapshot]);
+    onSelectClip(null, selectedTrackId ?? null);
+  }, [onSelectClip, selectedClipId, selectedTrackId, snapshot]);
 
   const runCommand = useEffectEvent(async (
     command: EditorCommand,
@@ -170,40 +187,43 @@ export function TimelineEditor({
 
     switch (response.result.commandType) {
       case "CreateTimeline":
-        setSelectedTrackId(response.result.createdTrackIds[0] ?? null);
-        setSelectedClipId(null);
+        onSelectTrack(response.result.createdTrackIds[0] ?? null);
+        onSelectClip(null, response.result.createdTrackIds[0] ?? null);
         setEditorMessage("Timeline initialized with default video and audio tracks.");
         break;
       case "AddTrack":
-        setSelectedTrackId(response.result.trackId);
+        onSelectTrack(response.result.trackId);
         setEditorMessage("Track added.");
         break;
       case "InsertClip":
-        setSelectedTrackId(response.result.trackId);
-        setSelectedClipId(response.result.clipId);
+        onSelectTrack(response.result.trackId);
+        onSelectClip(response.result.clipId, response.result.trackId);
         setEditorMessage("Clip inserted.");
         break;
       case "InsertLinkedMedia":
-        setSelectedClipId(response.result.videoClipId ?? response.result.audioClipId);
+        onSelectClip(
+          response.result.videoClipId ?? response.result.audioClipId,
+          selectedTrackId
+        );
         setEditorMessage("Linked media inserted onto the timeline.");
         break;
       case "SplitClip":
-        setSelectedClipId(response.result.rightClipId);
+        onSelectClip(response.result.rightClipId, selectedTrackId);
         setEditorMessage("Clip split.");
         break;
       case "MoveClip":
       case "TrimClipStart":
       case "TrimClipEnd":
-        setSelectedClipId(response.result.clipId);
+        onSelectClip(response.result.clipId, selectedTrackId);
         setEditorMessage("Clip updated.");
         break;
       case "RippleDeleteClip":
-        setSelectedClipId(null);
+        onSelectClip(null, selectedTrackId);
         setEditorMessage("Clip removed with ripple.");
         break;
       case "LockTrack":
       case "UnlockTrack":
-        setSelectedTrackId(response.result.trackId);
+        onSelectTrack(response.result.trackId);
         setEditorMessage(
           response.result.commandType === "LockTrack" ? "Track locked." : "Track unlocked."
         );
@@ -334,14 +354,10 @@ export function TimelineEditor({
     const bounds = event.currentTarget.getBoundingClientRect();
     const positionUs = Math.max(0, Math.round((event.clientX - bounds.left) / pixelsPerUs));
 
-    void runCommand(
-      {
-        type: "SetPlayhead",
-        timelineId: snapshot.timeline.id,
-        positionUs
-      },
-      "Moving playhead…"
-    );
+    void previewController.executeCommand({
+      type: "SeekPreview",
+      positionUs
+    });
   }
 
   function handleCreateTimeline(): void {
@@ -373,6 +389,22 @@ export function TimelineEditor({
     );
   }
 
+  function handleAddMarker(): void {
+    if (!snapshot) {
+      return;
+    }
+
+    void runCommand(
+      {
+        type: "AddMarker",
+        timelineId: snapshot.timeline.id,
+        positionUs: currentPlayheadUs,
+        label: `Marker ${snapshot.timeline.markers.length + 1}`
+      },
+      "Adding marker…"
+    );
+  }
+
   function handleInsertSelected(mode: "linked" | "video" | "audio"): void {
     if (!snapshot || !selectedMediaItem) {
       return;
@@ -389,7 +421,7 @@ export function TimelineEditor({
           mediaItemId: selectedMediaItem.id,
           videoTrackId: preferredVideoTrack?.id ?? null,
           audioTrackId: preferredAudioTrack?.id ?? null,
-          timelineStartUs: snapshot.timeline.playheadUs
+          timelineStartUs: currentPlayheadUs
         },
         "Inserting linked media…"
       );
@@ -410,7 +442,7 @@ export function TimelineEditor({
         trackId: targetTrack.id,
         mediaItemId: selectedMediaItem.id,
         streamType: mode,
-        timelineStartUs: snapshot.timeline.playheadUs
+        timelineStartUs: currentPlayheadUs
       },
       `Inserting ${mode} clip…`
     );
@@ -426,7 +458,7 @@ export function TimelineEditor({
         type: "SplitClip",
         timelineId: snapshot.timeline.id,
         clipId: selectedClipId,
-        splitTimeUs: snapshot.timeline.playheadUs
+        splitTimeUs: currentPlayheadUs
       },
       "Splitting clip…"
     );
@@ -465,8 +497,7 @@ export function TimelineEditor({
   function startMove(event: ReactMouseEvent<HTMLButtonElement>, clip: TimelineClip): void {
     event.preventDefault();
     event.stopPropagation();
-    setSelectedTrackId(clip.trackId);
-    setSelectedClipId(clip.id);
+    onSelectClip(clip.id, clip.trackId);
     setInteraction({
       kind: "move",
       clipId: clip.id,
@@ -484,8 +515,7 @@ export function TimelineEditor({
   ): void {
     event.preventDefault();
     event.stopPropagation();
-    setSelectedTrackId(clip.trackId);
-    setSelectedClipId(clip.id);
+    onSelectClip(clip.id, clip.trackId);
     setInteraction({
       kind,
       clipId: clip.id,
@@ -530,7 +560,7 @@ export function TimelineEditor({
       <section className="editor-panel" data-testid="timeline-editor">
         <div className="empty-panel">
           <strong>No timeline session yet.</strong>
-          <p>Open or create a project first. Stage 3 editing commands are available as soon as a workspace is loaded.</p>
+          <p>Open or create a project first. Preview commands activate as soon as a workspace loads.</p>
         </div>
       </section>
     );
@@ -548,7 +578,7 @@ export function TimelineEditor({
       <header className="panel-header">
         <div>
           <p className="eyebrow eyebrow--muted">Timeline editor</p>
-          <h2>Command-driven Stage 3 editing core</h2>
+          <h2>Preview-synced Stage 4 editing surface</h2>
         </div>
         <div className="button-row button-row--tight">
           <button
@@ -591,12 +621,18 @@ export function TimelineEditor({
       <div className="editor-toolbar">
         <div className="editor-toolbar__group">
           <span className="meta-label">Playhead</span>
-          <strong data-testid="timeline-playhead">{formatTimelineTime(snapshot.timeline.playheadUs)}</strong>
+          <strong data-testid="timeline-playhead">{formatTimelineTime(currentPlayheadUs)}</strong>
         </div>
         <div className="editor-toolbar__group">
           <span className="meta-label">History</span>
           <strong>
             {snapshot.history.undoDepth} undo / {snapshot.history.redoDepth} redo
+          </strong>
+        </div>
+        <div className="editor-toolbar__group">
+          <span className="meta-label">Preview</span>
+          <strong>
+            {previewState.playbackStatus} · {previewState.sourceMode}
           </strong>
         </div>
         {editorMessage ? (
@@ -609,7 +645,7 @@ export function TimelineEditor({
       {snapshot.timeline.trackOrder.length === 0 ? (
         <div className="empty-panel empty-panel--editor">
           <strong>No timeline created yet.</strong>
-          <p>Create the initial V1/A1 track set, then start inserting imported media through typed commands.</p>
+          <p>Create the initial V1/A1 track set, then preview, insert, and refine edits through commands.</p>
           <button
             className="primary-button"
             data-testid="create-timeline-button"
@@ -628,6 +664,9 @@ export function TimelineEditor({
               </button>
               <button className="secondary-button" onClick={() => handleAddTrack("audio")} type="button">
                 Add audio track
+              </button>
+              <button className="secondary-button" onClick={handleAddMarker} type="button">
+                Add marker at playhead
               </button>
             </div>
             <div className="button-row">
@@ -695,6 +734,18 @@ export function TimelineEditor({
             role="presentation"
           >
             <div className="timeline-ruler" style={{ width: `${timelineWidth}px` }}>
+              {snapshot.timeline.regions.map((region) => (
+                <div
+                  className="timeline-region"
+                  key={region.id}
+                  style={{
+                    left: `${region.startUs * pixelsPerUs}px`,
+                    width: `${Math.max(2, (region.endUs - region.startUs) * pixelsPerUs)}px`
+                  }}
+                >
+                  <span>{region.label}</span>
+                </div>
+              ))}
               {rulerMarks.map((markUs) => (
                 <div
                   className="timeline-ruler__mark"
@@ -704,9 +755,22 @@ export function TimelineEditor({
                   <span>{formatTimelineTime(markUs)}</span>
                 </div>
               ))}
+              {snapshot.timeline.markers.map((marker) => (
+                <div
+                  className={
+                    Math.abs(marker.positionUs - currentPlayheadUs) <= 50_000
+                      ? "timeline-marker timeline-marker--active"
+                      : "timeline-marker"
+                  }
+                  key={marker.id}
+                  style={{ left: `${marker.positionUs * pixelsPerUs}px` }}
+                >
+                  <span>{marker.label}</span>
+                </div>
+              ))}
               <div
                 className="timeline-playhead"
-                style={{ left: `${snapshot.timeline.playheadUs * pixelsPerUs}px` }}
+                style={{ left: `${currentPlayheadUs * pixelsPerUs}px` }}
               />
             </div>
 
@@ -729,7 +793,7 @@ export function TimelineEditor({
                   >
                     <button
                       className="timeline-track__header"
-                      onClick={() => setSelectedTrackId(track.id)}
+                      onClick={() => onSelectTrack(track.id)}
                       type="button"
                     >
                       <div>
@@ -738,7 +802,18 @@ export function TimelineEditor({
                       </div>
                     </button>
 
-                    <div className="timeline-track__lane" onClick={() => setSelectedTrackId(track.id)} role="presentation">
+                    <div
+                      className="timeline-track__lane"
+                      onClick={() => onSelectTrack(track.id)}
+                      role="presentation"
+                    >
+                      {snapshot.timeline.markers.map((marker) => (
+                        <div
+                          className="timeline-track__marker"
+                          key={`${track.id}-${marker.id}`}
+                          style={{ left: `${marker.positionUs * pixelsPerUs}px` }}
+                        />
+                      ))}
                       {clips.map((clip) => {
                         const mediaItem =
                           snapshot.libraryItems.find((item) => item.id === clip.mediaItemId) ?? null;
@@ -747,13 +822,18 @@ export function TimelineEditor({
                           48,
                           Math.round((bounds.endUs - bounds.startUs) * pixelsPerUs)
                         );
+                        const isActive = isClipUnderPlayhead(clip, currentPlayheadUs);
 
                         return (
                           <div
                             className={
                               selectedClipId === clip.id
-                                ? "timeline-clip timeline-clip--selected"
-                                : "timeline-clip"
+                                ? isActive
+                                  ? "timeline-clip timeline-clip--selected timeline-clip--active"
+                                  : "timeline-clip timeline-clip--selected"
+                                : isActive
+                                  ? "timeline-clip timeline-clip--active"
+                                  : "timeline-clip"
                             }
                             data-testid={`timeline-clip-${clip.id}`}
                             key={clip.id}
@@ -773,10 +853,7 @@ export function TimelineEditor({
                             </button>
                             <button
                               className="timeline-clip__body"
-                              onClick={() => {
-                                setSelectedClipId(clip.id);
-                                setSelectedTrackId(track.id);
-                              }}
+                              onClick={() => onSelectClip(clip.id, track.id)}
                               onMouseDown={(event) => startMove(event, clip)}
                               type="button"
                             >
@@ -810,8 +887,8 @@ export function TimelineEditor({
               <strong>{selectedClip ? clipLabel(selectedClip, selectedClipMedia) : "None"}</strong>
             </div>
             <div>
-              <span className="meta-label">Insert source</span>
-              <strong>{selectedMediaItem?.displayName ?? "Choose a library item"}</strong>
+              <span className="meta-label">Preview state</span>
+              <strong>{previewState.warning ?? `${previewState.qualityMode} / ${previewState.sourceMode}`}</strong>
             </div>
           </div>
         </>

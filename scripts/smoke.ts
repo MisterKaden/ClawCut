@@ -25,14 +25,27 @@ async function waitForLibraryToSettle(page: Page, projectDirectory: string): Pro
   );
 }
 
+async function waitForPreviewLoaded(page: Page, timelineId: string): Promise<void> {
+  await page.waitForFunction(
+    (expectedTimelineId) => {
+      const state = window.clawcutPreview.getPreviewState();
+      return state.loaded && state.timelineId === expectedTimelineId;
+    },
+    timelineId,
+    {
+      timeout: 15_000
+    }
+  );
+}
+
 async function runSmoke(): Promise<void> {
   const require = createRequire(import.meta.url);
   const workspaceRoot = resolve(process.cwd());
   const appRoot = resolve(workspaceRoot, "apps/desktop");
   const electronBinary = require("electron") as string;
   const mainEntry = resolve(appRoot, "out/main/index.js");
-  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage3-smoke-project-"));
-  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage3-smoke-import-"));
+  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage4-smoke-project-"));
+  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage4-smoke-import-"));
   const originalPath = join(importDirectory, "talking-head-sample.mp4");
   const screenshotDirectory = resolve(workspaceRoot, "output/playwright");
 
@@ -53,10 +66,10 @@ async function runSmoke(): Promise<void> {
     const page = await electronApp.firstWindow();
 
     await page.getByTestId("project-directory-input").fill(projectDirectory);
-    await page.getByTestId("project-name-input").fill("Stage 2 Smoke");
+    await page.getByTestId("project-name-input").fill("Stage 4 Smoke");
     await page.getByTestId("create-project-button").click();
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 2 Smoke") === true,
+      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 4 Smoke") === true,
       undefined,
       {
         timeout: 10_000
@@ -65,7 +78,7 @@ async function runSmoke(): Promise<void> {
 
     const projectHeading = await page.getByTestId("workspace-header").textContent();
 
-    if (!projectHeading?.includes("Stage 2 Smoke")) {
+    if (!projectHeading?.includes("Stage 4 Smoke")) {
       throw new Error(`Smoke project was not opened. Header text: ${projectHeading ?? "missing"}`);
     }
 
@@ -111,7 +124,7 @@ async function runSmoke(): Promise<void> {
       }
     );
 
-    const stageThreeResult = await page.evaluate(async (directory) => {
+    const stageFourResult = await page.evaluate(async (directory) => {
       const initial = await window.clawcut.getEditorSessionSnapshot({ directory });
       const videoTrackId = initial.timeline.trackOrder.find(
         (trackId) => initial.timeline.tracksById[trackId]?.kind === "video"
@@ -130,26 +143,9 @@ async function runSmoke(): Promise<void> {
         throw new Error("Video clip payload was missing from the timeline.");
       }
 
-      await window.clawcut.executeEditorCommand({
-        directory,
-        command: {
-          type: "MoveClip",
-          timelineId: initial.timeline.id,
-          clipId: videoClipId,
-          newTimelineStartUs: 2_000_000
-        }
-      });
-
-      const movedSnapshot = await window.clawcut.getEditorSessionSnapshot({ directory });
-      const movedClip = movedSnapshot.timeline.clipsById[videoClipId];
-
-      if (!movedClip) {
-        throw new Error("MoveClip removed the expected clip.");
-      }
-
       const splitTimeUs =
-        movedClip.timelineStartUs +
-        Math.round((movedClip.sourceOutUs - movedClip.sourceInUs) / 2);
+        initialVideoClip.timelineStartUs +
+        Math.round((initialVideoClip.sourceOutUs - initialVideoClip.sourceInUs) / 2);
 
       const split = await window.clawcut.executeEditorCommand({
         directory,
@@ -165,30 +161,104 @@ async function runSmoke(): Promise<void> {
         throw new Error("SplitClip command failed during smoke.");
       }
 
-      await window.clawcut.executeEditorCommand({
-        directory,
-        command: {
-          type: "TrimClipEnd",
-          timelineId: initial.timeline.id,
-          clipId: split.result.leftClipId,
-          newTimelineEndUs: 4_000_000
-        }
+      await window.clawcutPreview.executeCommand({
+        type: "LoadTimelinePreview",
+        target: {
+          directory: initial.directory,
+          cacheRoot: initial.cacheRoot,
+          timeline: split.snapshot.timeline,
+          libraryItems: split.snapshot.libraryItems,
+          defaultQualityMode: "fast"
+        },
+        preservePlayhead: false
+      });
+      await window.clawcutPreview.executeCommand({
+        type: "SetPreviewQuality",
+        qualityMode: "fast"
       });
 
-      await window.clawcut.executeEditorCommand({
-        directory,
-        command: {
-          type: "RippleDeleteClip",
-          timelineId: initial.timeline.id,
-          clipId: split.result.leftClipId
-        }
+      const fastState = window.clawcutPreview.getPreviewState();
+
+      if (fastState.sourceMode !== "proxy") {
+        throw new Error(`Expected fast preview to prefer proxies, got ${fastState.sourceMode}.`);
+      }
+
+      await window.clawcutPreview.executeCommand({
+        type: "SetPreviewQuality",
+        qualityMode: "standard"
       });
+
+      const standardState = window.clawcutPreview.getPreviewState();
+
+      if (standardState.sourceMode !== "original") {
+        throw new Error(
+          `Expected standard preview to use originals, got ${standardState.sourceMode}.`
+        );
+      }
+
+      await window.clawcutPreview.executeCommand({
+        type: "SeekPreview",
+        positionUs: splitTimeUs + 250_000
+      });
+
+      const secondClipState = window.clawcutPreview.getPreviewState();
+
+      if (secondClipState.activeVideoClipId !== split.result.rightClipId) {
+        throw new Error("Preview did not resolve onto the second sequential clip.");
+      }
+
+      await window.clawcutPreview.executeCommand({
+        type: "SeekPreview",
+        positionUs: 200_000
+      });
+      await window.clawcutPreview.executeCommand({
+        type: "PlayPreview"
+      });
+
+      return {
+        timelineId: split.snapshot.timeline.id,
+        rightClipId: split.result.rightClipId
+      };
+    }, projectDirectory);
+
+    await waitForPreviewLoaded(page, stageFourResult.timelineId);
+    await page.getByTestId("preview-panel").waitFor({ state: "visible" });
+    await page.getByTestId("preview-play-toggle").waitFor({ state: "visible" });
+    await page.waitForFunction(() => {
+      return window.clawcutPreview.getPreviewState().playbackStatus === "playing";
+    });
+    await page.waitForTimeout(700);
+
+    const pausedPreviewPlayheadUs = await page.evaluate(async () => {
+      await window.clawcutPreview.executeCommand({
+        type: "PausePreview"
+      });
+
+      return window.clawcutPreview.getPreviewState().playheadUs;
+    });
+
+    if (pausedPreviewPlayheadUs <= 200_000) {
+      throw new Error("Preview playhead did not advance during playback.");
+    }
+
+    await page.evaluate(async () => {
+      await window.clawcutPreview.executeCommand({
+        type: "StepPreviewFrameForward"
+      });
+    });
+
+    const stageThreeResult = await page.evaluate(async (directory) => {
+      const stateAfterPreview = window.clawcutPreview.getPreviewState();
+
+      if (stateAfterPreview.playheadUs <= 0) {
+        throw new Error("Preview frame stepping did not leave a usable playhead position.");
+      }
 
       await window.clawcut.executeEditorCommand({
         directory,
         command: {
           type: "Undo",
-          timelineId: initial.timeline.id
+          timelineId: (await window.clawcut.getEditorSessionSnapshot({ directory })).timeline.id
         }
       });
 
@@ -196,7 +266,7 @@ async function runSmoke(): Promise<void> {
         directory,
         command: {
           type: "Redo",
-          timelineId: initial.timeline.id
+          timelineId: (await window.clawcut.getEditorSessionSnapshot({ directory })).timeline.id
         }
       });
 
@@ -220,7 +290,7 @@ async function runSmoke(): Promise<void> {
     );
 
     await page.screenshot({
-      path: resolve(screenshotDirectory, "clawcut-stage3-smoke.png"),
+      path: resolve(screenshotDirectory, "clawcut-stage4-smoke.png"),
       fullPage: true
     });
   } finally {

@@ -9,6 +9,7 @@ import {
   type MediaItem,
   type MediaSourceType
 } from "./media";
+import { PROJECT_PREVIEW_DEFAULT_MODES, type ProjectPreviewDefaultMode } from "./preview";
 import { createEmptyTimeline, timelineSchema, type Timeline } from "./timeline";
 
 export const PROJECT_SCHEMA_VERSION = 3;
@@ -51,7 +52,7 @@ export interface ProjectSettingsV1 {
     proxyPreset?: "stage2-standard-proxy";
   };
   preview: {
-    defaultMode: "fast-proxy";
+    defaultMode: ProjectPreviewDefaultMode;
   };
   captions: {
     defaultTemplate: "bottom-clean";
@@ -66,7 +67,7 @@ export interface ProjectSettingsV2 {
     proxyPreset: "stage2-standard-proxy";
   };
   preview: {
-    defaultMode: "fast-proxy";
+    defaultMode: ProjectPreviewDefaultMode;
   };
   captions: {
     defaultTemplate: "bottom-clean";
@@ -131,7 +132,7 @@ const identitySchema = z.object({
 
 const settingsSchemaV1 = z.object({
   preview: z.object({
-    defaultMode: z.literal("fast-proxy")
+    defaultMode: z.enum(PROJECT_PREVIEW_DEFAULT_MODES)
   }),
   captions: z.object({
     defaultTemplate: z.literal("bottom-clean")
@@ -146,7 +147,7 @@ const settingsSchemaV2 = z.object({
     proxyPreset: z.literal("stage2-standard-proxy")
   }),
   preview: z.object({
-    defaultMode: z.literal("fast-proxy")
+    defaultMode: z.enum(PROJECT_PREVIEW_DEFAULT_MODES)
   }),
   captions: z.object({
     defaultTemplate: z.literal("bottom-clean")
@@ -254,7 +255,7 @@ export function createEmptyProjectDocument(projectName: string): ProjectDocument
         proxyPreset: "stage2-standard-proxy"
       },
       preview: {
-        defaultMode: "fast-proxy"
+        defaultMode: "standard"
       },
       captions: {
         defaultTemplate: "bottom-clean"

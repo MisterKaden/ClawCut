@@ -59,6 +59,15 @@
     - `getEditorSessionSnapshot`
   - Reason: this is enough to decouple React from editor logic immediately, while avoiding the scope and security work of a public local server before OpenClaw integration is ready.
 
+## Preview control surface
+
+- Keep Stage 4 preview control as a renderer-local typed command/query gateway.
+  - Decision:
+    - `window.clawcutPreview.executeCommand`
+    - `window.clawcutPreview.getPreviewState`
+    - `window.clawcutPreview.subscribeToPreviewState`
+  - Reason: the current playback backend lives in the renderer, so this keeps the control path typed and automation-ready now without pretending the preview engine belongs in React state.
+
 ## Cache layout
 
 - Deterministic cache rooted at `.clawcut/cache/media/<mediaItemId>/<sourceRevision>/`.
@@ -74,6 +83,54 @@
 
 - One Stage 2 proxy preset: H.264/AAC MP4, `yuv420p`, `+faststart`, max dimension 960 px, max 30 fps.
   - Reason: boring but dependable defaults are better than premature tuning while ingest and cache semantics stabilize.
+
+## Preview quality policy
+
+- Three preview quality modes: `fast`, `standard`, and `accurate`.
+  - Decision:
+    - `fast` prefers proxies
+    - `standard` prefers originals
+    - `accurate` requires originals and leaves room for future selected-range accurate preview cache
+  - Reason: preview needs an explicit reliability/performance policy rather than hidden heuristics.
+
+## Preview backend
+
+- Stage 4 uses a replaceable backend interface with an `HTMLVideoElement` plus `HTMLAudioElement` implementation.
+  - Reason: it is reliable inside the current Electron shell, uses no new heavy dependency, and keeps the backend swappable when a libmpv-style or cached-preview backend becomes worth the integration cost.
+
+## Preview adapter boundary
+
+- Keep all runtime playback mechanics behind an explicit preview adapter boundary.
+  - Decision:
+    - `PreviewController` talks to a `PreviewAdapter`
+    - the current adapter is `HtmlMediaPreviewAdapter`
+    - future backends can replace the adapter without changing timeline or preview composition logic
+  - Reason: backend swaps should stay isolated to the runtime playback layer, not force timeline or domain refactors.
+
+## Preview frame inspection
+
+- Add a small programmatic frame-snapshot foundation now.
+  - Decision:
+    - `window.clawcutPreview.captureFrameSnapshot(options?)`
+    - adapter-level `captureFrameSnapshot(...)`
+    - current implementation captures from the active video element when possible and returns structured unavailable/error results otherwise
+  - Reason: OpenClaw will eventually need frame inspection without screen-driving the app.
+
+## Stage 4 synchronization target
+
+- Treat Stage 4 sync as editor-grade preview sync, not export-grade accuracy.
+  - Decision:
+    - prioritize stable transport, correct clip resolution, and coherent proxy/original mapping
+    - leave tighter accurate-preview guarantees to later selected-range cache work
+  - Reason: this keeps the current system honest about what it can guarantee while still being reliable for real editing.
+
+## Preview composition
+
+- Resolve preview composition from the timeline and media library, not from ad hoc UI state.
+  - Decision:
+    - pure composition in the domain package resolves active clips, gaps, trims, proxy fallback, and overlays
+    - renderer preview controller only owns transport and backend synchronization
+  - Reason: OpenClaw later needs the same machine-readable preview semantics that the UI uses.
 
 ## Waveform representation
 

@@ -3,6 +3,7 @@ export * from "./jobs";
 export * from "./migrations";
 export * from "./media";
 export * from "./preview";
+export * from "./preview-composition";
 export * from "./project";
 export * from "./render";
 export * from "./timeline";

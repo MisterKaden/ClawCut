@@ -39,7 +39,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -234,9 +235,24 @@ button {
   color: var(--text);
 }
 
-.field input:focus {
+.field select {
+  width: 100%;
+  padding: 15px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: rgba(4, 10, 14, 0.72);
+  color: var(--text);
+}
+
+.field input:focus,
+.field select:focus {
   outline: 1px solid rgba(228, 176, 106, 0.45);
   border-color: rgba(228, 176, 106, 0.5);
+}
+
+.field--compact {
+  margin-top: 0;
+  min-width: 220px;
 }
 
 .button-row {
@@ -581,6 +597,160 @@ button {
   background: rgba(135, 176, 232, 0.1);
 }
 
+.preview-panel {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(8, 15, 19, 0.9), rgba(10, 17, 22, 0.97));
+  box-shadow: var(--shadow);
+}
+
+.preview-panel__meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preview-viewer {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top left, rgba(228, 176, 106, 0.08), transparent 32%),
+    linear-gradient(180deg, rgba(3, 6, 8, 0.96), rgba(10, 15, 19, 0.98));
+}
+
+.preview-viewer__video,
+.preview-viewer__slate {
+  position: absolute;
+  inset: 0;
+}
+
+.preview-viewer__video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.preview-viewer__video--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview-viewer audio {
+  display: none;
+}
+
+.preview-viewer__slate {
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 20px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.preview-viewer__slate strong {
+  color: var(--text);
+}
+
+.preview-viewer__slate p {
+  margin: 0;
+}
+
+.preview-overlay-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.preview-safe-zone {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.preview-safe-zone--action {
+  inset: 10%;
+}
+
+.preview-safe-zone--title {
+  inset: 20%;
+}
+
+.preview-overlay-list {
+  position: absolute;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 14px;
+}
+
+.preview-overlay-list--top {
+  top: 0;
+  left: 0;
+}
+
+.preview-overlay-list--bottom {
+  bottom: 0;
+  left: 0;
+}
+
+.preview-overlay-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(228, 176, 106, 0.3);
+  border-radius: 999px;
+  background: rgba(8, 14, 18, 0.74);
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+}
+
+.preview-overlay-chip--selection {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+
+.preview-transport {
+  display: flex;
+  gap: 16px;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.preview-scrub {
+  display: grid;
+  gap: 10px;
+}
+
+.preview-scrub__time {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.preview-scrub__input {
+  width: 100%;
+}
+
+.preview-status-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.preview-status-grid strong {
+  display: block;
+}
+
 .editor-panel {
   display: grid;
   gap: 18px;
@@ -624,6 +794,23 @@ button {
   background-size: auto, 48px 48px;
 }
 
+.timeline-region {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  border: 1px solid rgba(135, 176, 232, 0.18);
+  border-radius: 12px;
+  background: rgba(135, 176, 232, 0.08);
+}
+
+.timeline-region span {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  color: rgba(237, 243, 246, 0.84);
+  font-size: 0.78rem;
+}
+
 .timeline-ruler__mark {
   position: absolute;
   top: 0;
@@ -639,6 +826,28 @@ button {
   color: var(--muted);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.76rem;
+}
+
+.timeline-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(135, 176, 232, 0.4);
+}
+
+.timeline-marker span {
+  position: absolute;
+  top: 34px;
+  left: 8px;
+  color: var(--progress);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.timeline-marker--active {
+  background: var(--progress);
 }
 
 .timeline-playhead {
@@ -697,6 +906,14 @@ button {
   background-size: auto, 48px 48px;
 }
 
+.timeline-track__marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(135, 176, 232, 0.24);
+}
+
 .timeline-clip {
   position: absolute;
   top: 14px;
@@ -711,6 +928,12 @@ button {
 
 .timeline-clip--selected {
   border-color: rgba(228, 176, 106, 0.64);
+}
+
+.timeline-clip--active {
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(135, 176, 232, 0.36);
 }
 
 .timeline-clip__body,

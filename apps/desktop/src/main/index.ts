@@ -1,6 +1,5 @@
 import * as electron from "electron";
 
-import { PlaceholderPreviewEngine } from "@clawcut/domain";
 import { createMediaWorkerHost } from "@clawcut/media-worker";
 
 import { registerIpcHandlers } from "./ipc";
@@ -8,7 +7,7 @@ import { createMainWindow } from "./window";
 
 const workspaceRoot = process.env.CLAWCUT_WORKSPACE_ROOT ?? process.cwd();
 const mediaWorkerHost = createMediaWorkerHost({ workspaceRoot });
-const previewEngine = new PlaceholderPreviewEngine();
+electron.app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 async function bootstrap(): Promise<void> {
   const { app, BrowserWindow } = electron;
@@ -18,20 +17,10 @@ async function bootstrap(): Promise<void> {
       return mediaWorkerHost.detectToolchain();
     },
     async createProject(input) {
-      const project = await mediaWorkerHost.createProject(input);
-      await previewEngine.setProject({
-        id: project.document.project.id,
-        name: project.document.project.name
-      });
-      return project;
+      return mediaWorkerHost.createProject(input);
     },
     async openProject(input) {
-      const project = await mediaWorkerHost.openProject(input);
-      await previewEngine.setProject({
-        id: project.document.project.id,
-        name: project.document.project.name
-      });
-      return project;
+      return mediaWorkerHost.openProject(input);
     },
     async getProjectSnapshot(input) {
       return mediaWorkerHost.getProjectSnapshot(input);
@@ -75,13 +64,11 @@ void bootstrap();
 
 electron.app.on("window-all-closed", async () => {
   if (process.platform !== "darwin") {
-    await previewEngine.dispose();
     await mediaWorkerHost.dispose();
     electron.app.quit();
   }
 });
 
 electron.app.on("before-quit", async () => {
-  await previewEngine.dispose();
   await mediaWorkerHost.dispose();
 });
