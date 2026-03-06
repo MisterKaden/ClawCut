@@ -1,0 +1,22 @@
+{
+  "name": "@clawcut/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "@clawcut/domain": "workspace:*",
+    "@clawcut/ipc": "workspace:*",
+    "@clawcut/media-worker": "workspace:*",
+    "@fontsource-variable/fraunces": "^5.2.8",
+    "@fontsource/ibm-plex-mono": "^5.2.6",
+    "@fontsource/ibm-plex-sans": "^5.2.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
+}

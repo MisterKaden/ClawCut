@@ -1,0 +1,48 @@
+{
+  "name": "clawcut",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stage 1 bootstrap for the Clawcut desktop video editor.",
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild"
+    ]
+  },
+  "scripts": {
+    "dev": "pnpm --filter @clawcut/desktop dev",
+    "build": "pnpm --filter @clawcut/desktop build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "smoke": "pnpm build && tsx scripts/smoke.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.21.0",
+    "@playwright/test": "^1.58.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^8.24.1",
+    "@typescript-eslint/parser": "^8.24.1",
+    "@vitejs/plugin-react": "^5.1.0",
+    "electron": "^40.8.0",
+    "electron-vite": "^4.0.0",
+    "eslint": "^9.21.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.18",
+    "globals": "^16.0.0",
+    "playwright": "^1.58.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.24.1",
+    "vite": "^7.3.1",
+    "vitest": "^3.2.4"
+  }
+}
