@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { platform } from "node:os";
+import { resolve } from "node:path";
 
 import type { SerializedWorkerError } from "@clawcut/ipc";
 
@@ -42,7 +43,7 @@ export function ensureAbsoluteDirectory(directory: string): string {
     throw new WorkerError("INVALID_DIRECTORY", "Project directory is required.");
   }
 
-  return directory.trim();
+  return resolve(directory.trim());
 }
 
 export function resolveSystemBinary(binaryName: string): string | null {
@@ -68,4 +69,12 @@ export function parseNumericValue(input: string | null | undefined): number | nu
   const parsed = Number(input);
 
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function nowIso(): string {
+  return new Date().toISOString();
+}
+
+export function normalizeFileSystemPath(input: string): string {
+  return resolve(input).replace(/\\/gu, "/");
 }

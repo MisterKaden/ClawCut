@@ -1,10 +1,21 @@
 import type {
   CreateProjectInput,
+  ExecuteEditorCommandInput,
+  ExecuteEditorCommandResult,
+  EditorSessionSnapshot,
+  GetProjectSnapshotInput,
+  GetEditorSessionSnapshotInput,
+  ImportMediaPathsInput,
   MediaProbeResult,
   OpenProjectInput,
+  PickImportPathsInput,
+  PickImportPathsResult,
   ProbeAssetInput,
   ProjectWorkspaceSnapshot,
-  RegisterFixtureMediaInput,
+  RefreshMediaHealthInput,
+  RelinkMediaItemInput,
+  RelinkMediaItemResult,
+  RetryJobInput,
   SerializedWorkerError,
   ToolchainStatus
 } from "@clawcut/ipc";
@@ -22,8 +33,36 @@ export interface WorkerMethodMap {
     request: OpenProjectInput;
     response: ProjectWorkspaceSnapshot;
   };
-  registerFixtureMedia: {
-    request: RegisterFixtureMediaInput;
+  getProjectSnapshot: {
+    request: GetProjectSnapshotInput;
+    response: ProjectWorkspaceSnapshot;
+  };
+  getEditorSessionSnapshot: {
+    request: GetEditorSessionSnapshotInput;
+    response: EditorSessionSnapshot;
+  };
+  executeEditorCommand: {
+    request: ExecuteEditorCommandInput;
+    response: ExecuteEditorCommandResult;
+  };
+  pickImportPaths: {
+    request: PickImportPathsInput | null;
+    response: PickImportPathsResult;
+  };
+  importMediaPaths: {
+    request: ImportMediaPathsInput;
+    response: { snapshot: ProjectWorkspaceSnapshot; acceptedPaths: string[]; queuedJobIds: string[] };
+  };
+  refreshMediaHealth: {
+    request: RefreshMediaHealthInput;
+    response: ProjectWorkspaceSnapshot;
+  };
+  relinkMediaItem: {
+    request: RelinkMediaItemInput;
+    response: RelinkMediaItemResult;
+  };
+  retryJob: {
+    request: RetryJobInput;
     response: ProjectWorkspaceSnapshot;
   };
   probeAsset: {

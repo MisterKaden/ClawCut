@@ -2,7 +2,7 @@
   "name": "clawcut",
   "version": "0.1.0",
   "private": true,
-  "description": "Stage 1 bootstrap for the Clawcut desktop video editor.",
+  "description": "Stage 2 ingest and cache foundation for the Clawcut desktop video editor.",
   "packageManager": "pnpm@10.28.1",
   "engines": {
     "node": ">=22.0.0"
@@ -34,6 +34,7 @@
     "@vitejs/plugin-react": "^5.1.0",
     "electron": "^40.8.0",
     "electron-vite": "^4.0.0",
+    "esbuild": "0.27.3",
     "eslint": "^9.21.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.18",

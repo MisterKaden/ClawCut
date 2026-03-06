@@ -3,9 +3,15 @@ import type { WorkerRequest, WorkerResponse } from "./contracts";
 import {
   handleCreateProject,
   handleDetectToolchain,
+  handleExecuteEditorCommand,
+  handleGetEditorSessionSnapshot,
+  handleGetProjectSnapshot,
+  handleImportMediaPaths,
   handleOpenProject,
   handleProbeAsset,
-  handleRegisterFixtureMedia
+  handleRefreshMediaHealth,
+  handleRelinkMediaItem,
+  handleRetryJob
 } from "./handlers";
 import { serializeError } from "./utils";
 
@@ -17,8 +23,22 @@ async function dispatchRequest(message: WorkerRequest): Promise<unknown> {
       return handleCreateProject(message.payload);
     case "openProject":
       return handleOpenProject(message.payload);
-    case "registerFixtureMedia":
-      return handleRegisterFixtureMedia(message.payload);
+    case "getProjectSnapshot":
+      return handleGetProjectSnapshot(message.payload);
+    case "getEditorSessionSnapshot":
+      return handleGetEditorSessionSnapshot(message.payload);
+    case "executeEditorCommand":
+      return handleExecuteEditorCommand(message.payload);
+    case "pickImportPaths":
+      throw new Error("pickImportPaths must be handled in the Electron main process.");
+    case "importMediaPaths":
+      return handleImportMediaPaths(message.payload);
+    case "refreshMediaHealth":
+      return handleRefreshMediaHealth(message.payload);
+    case "relinkMediaItem":
+      return handleRelinkMediaItem(message.payload);
+    case "retryJob":
+      return handleRetryJob(message.payload);
     case "probeAsset":
       return handleProbeAsset(message.payload);
   }

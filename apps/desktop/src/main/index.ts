@@ -33,8 +33,29 @@ async function bootstrap(): Promise<void> {
       });
       return project;
     },
-    async registerFixtureMedia(input) {
-      return mediaWorkerHost.registerFixtureMedia(input);
+    async getProjectSnapshot(input) {
+      return mediaWorkerHost.getProjectSnapshot(input);
+    },
+    async getEditorSessionSnapshot(input) {
+      return mediaWorkerHost.getEditorSessionSnapshot(input);
+    },
+    async executeEditorCommand(input) {
+      return mediaWorkerHost.executeEditorCommand(input);
+    },
+    async pickImportPaths() {
+      throw new Error("pickImportPaths is handled by the Electron IPC layer.");
+    },
+    async importMediaPaths(input) {
+      return mediaWorkerHost.importMediaPaths(input);
+    },
+    async refreshMediaHealth(input) {
+      return mediaWorkerHost.refreshMediaHealth(input);
+    },
+    async relinkMediaItem(input) {
+      return mediaWorkerHost.relinkMediaItem(input);
+    },
+    async retryJob(input) {
+      return mediaWorkerHost.retryJob(input);
     },
     async probeAsset(input) {
       return mediaWorkerHost.probeAsset(input);

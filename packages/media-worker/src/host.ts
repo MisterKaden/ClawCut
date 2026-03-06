@@ -1,14 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { fork } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { delimiter, resolve } from "node:path";
 
 import type {
   CreateProjectInput,
+  ExecuteEditorCommandInput,
+  ExecuteEditorCommandResult,
+  EditorSessionSnapshot,
+  GetProjectSnapshotInput,
+  GetEditorSessionSnapshotInput,
+  ImportMediaPathsInput,
+  ImportMediaPathsResult,
   MediaProbeResult,
   OpenProjectInput,
+  PickImportPathsResult,
   ProbeAssetInput,
+  RefreshMediaHealthInput,
+  RelinkMediaItemInput,
+  RelinkMediaItemResult,
+  RetryJobInput,
   ProjectWorkspaceSnapshot,
-  RegisterFixtureMediaInput,
   ToolchainStatus
 } from "@clawcut/ipc";
 
@@ -32,6 +44,17 @@ export interface CreateMediaWorkerHostOptions {
   workerEntryPath?: string;
 }
 
+export interface MediaWorkerLaunchConfig {
+  workerEntryPath: string;
+  execPath?: string;
+  execArgv?: string[];
+  env?: NodeJS.ProcessEnv;
+}
+
+function isTypeScriptWorkerEntry(entryPath: string): boolean {
+  return entryPath.endsWith(".ts") || entryPath.endsWith(".tsx");
+}
+
 function resolveNodeBinary(): string {
   const resolved = process.env.CLAWCUT_NODE_BIN ?? resolveSystemBinary("node");
 
@@ -50,18 +73,80 @@ function isWorkerErrorResponse(response: WorkerResponse): response is WorkerErro
   return response.ok === false;
 }
 
+export function resolveMediaWorkerLaunchConfig(
+  options: CreateMediaWorkerHostOptions = {}
+): MediaWorkerLaunchConfig {
+  const workspaceRoot = options.workspaceRoot ?? process.cwd();
+  const packageNodePaths = [
+    resolve(workspaceRoot, "node_modules"),
+    resolve(workspaceRoot, "packages", "media-worker", "node_modules")
+  ];
+  const nodePath = [...packageNodePaths, process.env.NODE_PATH].filter(Boolean).join(delimiter);
+  const explicitEntryPath = options.workerEntryPath;
+
+  if (explicitEntryPath) {
+    return isTypeScriptWorkerEntry(explicitEntryPath)
+      ? {
+          workerEntryPath: explicitEntryPath,
+          execPath: resolveNodeBinary(),
+          execArgv: ["--import", "tsx"],
+          env: {
+            ...process.env,
+            NODE_PATH: nodePath
+          }
+        }
+      : {
+          workerEntryPath: explicitEntryPath,
+          execPath: resolveNodeBinary(),
+          env: {
+            ...process.env,
+            NODE_PATH: nodePath
+          }
+        };
+  }
+
+  const builtWorkerEntryPath = resolve(
+    workspaceRoot,
+    "apps",
+    "desktop",
+    "out",
+    "media-worker",
+    "worker.cjs"
+  );
+
+  if (existsSync(builtWorkerEntryPath)) {
+    return {
+      workerEntryPath: builtWorkerEntryPath,
+      execPath: resolveNodeBinary(),
+      env: {
+        ...process.env,
+        NODE_PATH: nodePath
+      }
+    };
+  }
+
+  return {
+    workerEntryPath: resolve(workspaceRoot, "packages", "media-worker", "src", "worker.ts"),
+    execPath: resolveNodeBinary(),
+    execArgv: ["--import", "tsx"],
+    env: {
+      ...process.env,
+      NODE_PATH: nodePath
+    }
+  };
+}
+
 export function createMediaWorkerHost(
   options: CreateMediaWorkerHostOptions = {}
 ): MediaWorkerClient {
   const workspaceRoot = options.workspaceRoot ?? process.cwd();
-  const workerEntryPath =
-    options.workerEntryPath ??
-    resolve(workspaceRoot, "packages", "media-worker", "src", "worker.ts");
+  const launchConfig = resolveMediaWorkerLaunchConfig(options);
 
-  const child = fork(workerEntryPath, {
+  const child = fork(launchConfig.workerEntryPath, {
     cwd: workspaceRoot,
-    execPath: resolveNodeBinary(),
-    execArgv: ["--import", "tsx"],
+    execPath: launchConfig.execPath,
+    execArgv: launchConfig.execArgv,
+    env: launchConfig.env,
     stdio: ["pipe", "pipe", "pipe", "ipc"]
   });
 
@@ -142,10 +227,33 @@ export function createMediaWorkerHost(
     openProject(input: OpenProjectInput): Promise<ProjectWorkspaceSnapshot> {
       return invoke("openProject", input);
     },
-    registerFixtureMedia(
-      input: RegisterFixtureMediaInput
-    ): Promise<ProjectWorkspaceSnapshot> {
-      return invoke("registerFixtureMedia", input);
+    getProjectSnapshot(input: GetProjectSnapshotInput): Promise<ProjectWorkspaceSnapshot> {
+      return invoke("getProjectSnapshot", input);
+    },
+    getEditorSessionSnapshot(
+      input: GetEditorSessionSnapshotInput
+    ): Promise<EditorSessionSnapshot> {
+      return invoke("getEditorSessionSnapshot", input);
+    },
+    executeEditorCommand(
+      input: ExecuteEditorCommandInput
+    ): Promise<ExecuteEditorCommandResult> {
+      return invoke("executeEditorCommand", input);
+    },
+    pickImportPaths(): Promise<PickImportPathsResult> {
+      throw new Error("pickImportPaths is handled in the Electron main process.");
+    },
+    importMediaPaths(input: ImportMediaPathsInput): Promise<ImportMediaPathsResult> {
+      return invoke("importMediaPaths", input);
+    },
+    refreshMediaHealth(input: RefreshMediaHealthInput): Promise<ProjectWorkspaceSnapshot> {
+      return invoke("refreshMediaHealth", input);
+    },
+    relinkMediaItem(input: RelinkMediaItemInput): Promise<RelinkMediaItemResult> {
+      return invoke("relinkMediaItem", input);
+    },
+    retryJob(input: RetryJobInput): Promise<ProjectWorkspaceSnapshot> {
+      return invoke("retryJob", input);
     },
     probeAsset(input: ProbeAssetInput): Promise<MediaProbeResult> {
       return invoke("probeAsset", input);
