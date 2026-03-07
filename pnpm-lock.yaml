@@ -120,6 +120,9 @@ importers:
       '@clawcut/domain':
         specifier: workspace:*
         version: link:../domain
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
 
   packages/media-worker:
     dependencies:
@@ -132,6 +135,12 @@ importers:
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.6.2
+
+  packages/openclaw-plugin:
+    dependencies:
+      '@clawcut/ipc':
+        specifier: workspace:*
+        version: link:../ipc
 
 packages:
 

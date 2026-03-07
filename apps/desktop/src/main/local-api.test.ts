@@ -404,6 +404,40 @@ async function requestJson<TData>(
   };
 }
 
+async function readEventStreamChunk(
+  response: Response,
+  expectedFragments: string[],
+  timeoutMs = 2_000
+): Promise<string> {
+  if (!response.body) {
+    throw new Error("Expected an event-stream body.");
+  }
+
+  const reader = response.body.getReader();
+  const startedAt = Date.now();
+  let output = "";
+
+  try {
+    while (Date.now() - startedAt < timeoutMs) {
+      const { value, done } = await reader.read();
+
+      if (done || !value) {
+        break;
+      }
+
+      output += new TextDecoder().decode(value);
+
+      if (expectedFragments.every((fragment) => output.includes(fragment))) {
+        return output;
+      }
+    }
+
+    throw new Error(`Event stream did not emit ${expectedFragments.join(", ")} within timeout.`);
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
 describe.sequential("LocalApiController", () => {
   afterEach(async () => {
     while (activeControllers.length > 0) {
@@ -457,28 +491,59 @@ describe.sequential("LocalApiController", () => {
       ok: true;
       data: {
         apiVersion: string;
+        protocolVersion: string;
         auth: { required: boolean; scopes: string[] };
-        commands: Array<{ name: string }>;
+        commands: Array<{ name: string; safetyClass: string }>;
       };
     }>(started.status.baseUrl, "/api/v1/capabilities", {
       token: started.token
     });
     const tools = await requestJson<{
       ok: true;
-      data: Array<{ name: string; apiName: string }>;
+      data: Array<{ name: string; operationName: string; safetyClass: string }>;
     }>(started.status.baseUrl, "/api/v1/openclaw/tools", {
+      token: started.token
+    });
+    const manifest = await requestJson<{
+      ok: true;
+      data: {
+        manifestVersion: string;
+        protocolVersion: string;
+        endpoints: { events: string; openClawManifest: string };
+        capabilityAvailability: { eventStream: boolean; openClawPlugin: boolean };
+        tools: Array<{ name: string }>;
+      };
+    }>(started.status.baseUrl, "/api/v1/openclaw/manifest", {
       token: started.token
     });
 
     expect(capabilities.status).toBe(200);
     expect(capabilities.body.data.apiVersion).toBe("v1");
+    expect(capabilities.body.data.protocolVersion).toBe("1");
     expect(capabilities.body.data.auth.required).toBe(true);
     expect(capabilities.body.data.commands.some((entry) => entry.name === "project.open")).toBe(
       true
     );
+    expect(
+      capabilities.body.data.commands.some(
+        (entry) => entry.name === "export.start" && entry.safetyClass === "high-impact"
+      )
+    ).toBe(true);
     expect(tools.status).toBe(200);
     expect(tools.body.data.some((entry) => entry.name === "clawcut.open_project")).toBe(true);
-    expect(tools.body.data.some((entry) => entry.apiName === "export.execute")).toBe(true);
+    expect(tools.body.data.some((entry) => entry.operationName === "export.start")).toBe(true);
+    expect(tools.body.data.some((entry) => entry.name === "clawcut.capture_preview_frame")).toBe(
+      true
+    );
+    expect(manifest.status).toBe(200);
+    expect(manifest.body.data.manifestVersion).toBe("1");
+    expect(manifest.body.data.protocolVersion).toBe("1");
+    expect(manifest.body.data.capabilityAvailability.eventStream).toBe(true);
+    expect(manifest.body.data.capabilityAvailability.openClawPlugin).toBe(true);
+    expect(manifest.body.data.endpoints.events).toBe("/api/v1/events");
+    expect(manifest.body.data.tools.some((entry) => entry.name === "clawcut.capture_preview_frame")).toBe(
+      true
+    );
   });
 
   test("rejects malformed command payloads with structured validation errors", async () => {
@@ -532,7 +597,7 @@ describe.sequential("LocalApiController", () => {
       method: "POST",
       token: started.token,
       body: {
-        name: "timeline.session",
+        name: "timeline.get",
         input: {
           directory: started.directory
         }
@@ -556,15 +621,32 @@ describe.sequential("LocalApiController", () => {
       method: "POST",
       token: started.token,
       body: {
-        name: "export.execute",
+        name: "export.start",
         input: {
           directory: started.directory,
-          command: {
-            type: "StartExport",
-            request: {
-              timelineId: timelineSession.body.data.timeline.id,
-              presetId: "video-share-720p"
-            }
+          request: {
+            timelineId: timelineSession.body.data.timeline.id,
+            presetId: "video-share-720p"
+          }
+        }
+      }
+    });
+    const previewFrameReference = await requestJson<{
+      ok: true;
+      data: {
+        timelineId: string | null;
+        clipId: string | null;
+        hasImageData: boolean;
+        sourceMode: string;
+      };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "preview.frame-reference",
+        input: {
+          options: {
+            maxWidth: 320
           }
         }
       }
@@ -576,14 +658,11 @@ describe.sequential("LocalApiController", () => {
       method: "POST",
       token: started.token,
       body: {
-        name: "captions.execute",
+        name: "transcript.transcribeClip",
         input: {
           directory: started.directory,
-          command: {
-            type: "TranscribeClip",
-            timelineId: timelineSession.body.data.timeline.id,
-            clipId: "clip-1"
-          }
+          timelineId: timelineSession.body.data.timeline.id,
+          clipId: "clip-1"
         }
       }
     });
@@ -593,6 +672,10 @@ describe.sequential("LocalApiController", () => {
     expect(timelineSession.status).toBe(200);
     expect(previewState.status).toBe(200);
     expect(previewState.body.data.loaded).toBe(true);
+    expect(previewFrameReference.status).toBe(200);
+    expect(previewFrameReference.body.data.timelineId).toBeTruthy();
+    expect(previewFrameReference.body.data.clipId).toBe("clip-1");
+    expect(previewFrameReference.body.data.hasImageData).toBe(true);
     expect(exportCommand.body.data.result.exportRun.id).toBe("export-run-1");
     expect(captionCommand.body.data.result.run.id).toBe("transcription-run-1");
     expect(started.worker.openProject).toHaveBeenCalledWith({ directory: started.directory });
@@ -602,6 +685,7 @@ describe.sequential("LocalApiController", () => {
     expect(started.worker.executeExportCommand).toHaveBeenCalled();
     expect(started.worker.executeCaptionCommand).toHaveBeenCalled();
     expect(started.preview.getPreviewState).toHaveBeenCalled();
+    expect(started.preview.captureFrameSnapshot).toHaveBeenCalled();
   });
 
   test("enforces configured scopes for mutating or privileged operations", async () => {
@@ -684,5 +768,35 @@ describe.sequential("LocalApiController", () => {
     expect(transcriptionJob.body.data.job?.kind).toBe("transcription");
     expect(transcriptionJob.body.data.transcriptionRun?.id).toBe("transcription-run-1");
     expect(transcriptionJob.body.data.exportRun).toBeNull();
+  });
+
+  test("streams authenticated job updates through the local event stream", async () => {
+    const started = await createStartedController();
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const response = await fetch(
+      `${started.status.baseUrl}/api/v1/events?directory=${encodeURIComponent(started.directory)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${started.token}`
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+    const chunk = await readEventStreamChunk(response, [
+      "event: ready",
+      "event: jobs.snapshot"
+    ]);
+
+    expect(chunk).toContain("event: ready");
+    expect(chunk).toContain("event: jobs.snapshot");
+    expect(chunk).toContain("job-export-1");
+    expect(chunk).toContain("transcription-run-1");
   });
 });

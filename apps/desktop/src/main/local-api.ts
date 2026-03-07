@@ -7,21 +7,35 @@ import { z } from "zod";
 
 import type { PreviewBridge } from "./preview-bridge";
 
+import {
+  buildProjectSummary,
+  createLocalApiCapabilities,
+  createOpenClawToolManifest,
+  getLocalApiOperationDescriptor,
+  OPENCLAW_TOOL_DEFINITIONS,
+  parseLocalApiCommandInput,
+  parseLocalApiQueryInput,
+  resolveLocalApiCommandName,
+  resolveLocalApiQueryName
+} from "../../../../packages/ipc/src/control-schema";
 import type {
   ClawcutApi,
-  LocalApiCapabilities,
+  ExecuteCaptionCommandInput,
+  ExecuteEditorCommandInput,
+  ExecuteExportCommandInput,
   LocalApiCommandInputMap,
   LocalApiCommandName,
+  LocalApiEventStreamDescriptor,
+  LocalApiEventTopic,
   LocalApiEnvelope,
+  LocalApiPreviewFrameReference,
   LocalApiJobDetails,
-  LocalApiOperationDescriptor,
   LocalApiQueryInputMap,
   LocalApiQueryName,
   LocalApiRequestLogEntry,
   LocalApiScope,
   LocalApiState,
   LocalApiStatus,
-  OpenClawToolDefinition,
   SerializedWorkerError
 } from "@clawcut/ipc";
 
@@ -57,395 +71,18 @@ const DEFAULT_SCOPES: LocalApiScope[] = [
   "admin"
 ];
 
-const directorySchema = z.object({
-  directory: z.string().min(1)
+const eventStreamQuerySchema = z.object({
+  directory: z.string().min(1).optional(),
+  topics: z
+    .array(z.enum(["jobs", "exports", "transcriptions"]))
+    .default(["jobs", "exports", "transcriptions"])
 });
-const createProjectSchema = z.object({
-  directory: z.string().min(1),
-  name: z.string().min(1).optional()
-});
-const importMediaSchema = z.object({
-  directory: z.string().min(1),
-  paths: z.array(z.string().min(1)).min(1)
-});
-const relinkMediaSchema = z.object({
-  directory: z.string().min(1),
-  mediaItemId: z.string().min(1),
-  candidatePath: z.string().min(1)
-});
-const retryJobSchema = z.object({
-  directory: z.string().min(1),
-  jobId: z.string().min(1)
-});
-const previewLoadProjectSchema = z.object({
-  directory: z.string().min(1),
-  initialPlayheadUs: z.number().int().nonnegative().optional(),
-  preservePlayhead: z.boolean().optional()
-});
-const previewExecuteSchema = z.object({
-  command: z.object({
-    type: z.string().min(1)
-  }).passthrough()
-});
-const previewFrameSnapshotSchema = z.object({
-  options: z
-    .object({
-      maxWidth: z.number().int().positive().optional(),
-      mimeType: z.enum(["image/png", "image/jpeg"]).optional(),
-      quality: z.number().min(0).max(1).optional()
-    })
-    .optional()
-});
-const executeEditorSchema = z.object({
-  directory: z.string().min(1),
-  command: z.object({
-    type: z.string().min(1)
-  }).passthrough()
-});
-const executeExportSchema = z.object({
-  directory: z.string().min(1),
-  command: z.object({
-    type: z.string().min(1)
-  }).passthrough()
-});
-const executeCaptionSchema = z.object({
-  directory: z.string().min(1),
-  command: z.object({
-    type: z.string().min(1)
-  }).passthrough()
-});
-const jobDetailsSchema = z.object({
-  directory: z.string().min(1),
-  jobId: z.string().min(1)
-});
-
-const COMMAND_DESCRIPTORS: LocalApiOperationDescriptor[] = [
-  {
-    name: "project.create",
-    category: "project",
-    description: "Create a new ClawCut project directory and bootstrap project state.",
-    requiredScopes: ["edit"],
-    longRunning: false
-  },
-  {
-    name: "project.open",
-    category: "project",
-    description: "Open an existing project and refresh media health.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "project.save",
-    category: "project",
-    description: "Confirm the current project is persisted. ClawCut writes immediately.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "media.import",
-    category: "media",
-    description: "Import media paths into the project and queue ingest jobs.",
-    requiredScopes: ["edit"],
-    longRunning: true
-  },
-  {
-    name: "media.relink",
-    category: "media",
-    description: "Relink a missing media item to a candidate source path.",
-    requiredScopes: ["edit"],
-    longRunning: false
-  },
-  {
-    name: "timeline.execute",
-    category: "timeline",
-    description: "Execute a typed timeline command through the editor session.",
-    requiredScopes: ["edit"],
-    longRunning: false
-  },
-  {
-    name: "preview.load-project-timeline",
-    category: "preview",
-    description: "Load the current project timeline into preview from the local desktop session.",
-    requiredScopes: ["preview"],
-    longRunning: false
-  },
-  {
-    name: "preview.execute",
-    category: "preview",
-    description: "Execute a typed preview command against the active desktop preview session.",
-    requiredScopes: ["preview"],
-    longRunning: false
-  },
-  {
-    name: "export.execute",
-    category: "export",
-    description: "Execute a typed export command through the render/export session.",
-    requiredScopes: ["export"],
-    longRunning: true
-  },
-  {
-    name: "captions.execute",
-    category: "captions",
-    description: "Execute a typed transcript or caption command through the caption session.",
-    requiredScopes: ["transcript"],
-    longRunning: true
-  },
-  {
-    name: "jobs.retry",
-    category: "jobs",
-    description: "Retry a previously failed or cancelled ingest/transcription/export job.",
-    requiredScopes: ["edit"],
-    longRunning: true
-  }
-];
-
-const QUERY_DESCRIPTORS: LocalApiOperationDescriptor[] = [
-  {
-    name: "system.toolchain",
-    category: "system",
-    description: "Return current ffmpeg, ffprobe, and transcription engine readiness.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "project.snapshot",
-    category: "project",
-    description: "Return the canonical project workspace snapshot.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "timeline.session",
-    category: "timeline",
-    description: "Return the editor session snapshot including timeline and history state.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "media.snapshot",
-    category: "media",
-    description: "Return the current project media library and job list.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "preview.state",
-    category: "preview",
-    description: "Return the current preview state from the active desktop session.",
-    requiredScopes: ["preview"],
-    longRunning: false
-  },
-  {
-    name: "preview.frame-snapshot",
-    category: "preview",
-    description: "Capture a structured frame snapshot from the active preview session.",
-    requiredScopes: ["preview"],
-    longRunning: false
-  },
-  {
-    name: "export.session",
-    category: "export",
-    description: "Return export runs, diagnostics, and output metadata for a project.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "captions.session",
-    category: "captions",
-    description: "Return transcript, caption, and transcription-run state for a project.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "jobs.list",
-    category: "jobs",
-    description: "Return the current job list for a project.",
-    requiredScopes: ["read"],
-    longRunning: false
-  },
-  {
-    name: "jobs.get",
-    category: "jobs",
-    description: "Return a single job with related export/transcription details when available.",
-    requiredScopes: ["read"],
-    longRunning: false
-  }
-];
-
-const OPENCLAW_TOOLS: OpenClawToolDefinition[] = [
-  {
-    name: "clawcut.open_project",
-    description: "Open a local ClawCut project directory and return its workspace snapshot.",
-    operationType: "command",
-    apiName: "project.open",
-    requiredScopes: ["read"],
-    safetyNotes: ["Local filesystem access only.", "Project validation still runs in ClawCut."],
-    inputSchema: {
-      type: "object",
-      required: ["directory"],
-      properties: {
-        directory: {
-          type: "string",
-          description: "Absolute path to the ClawCut project directory."
-        }
-      }
-    },
-    outputDescription: "Returns a project workspace snapshot with library items and jobs."
-  },
-  {
-    name: "clawcut.import_media",
-    description: "Import one or more local media paths into a ClawCut project.",
-    operationType: "command",
-    apiName: "media.import",
-    requiredScopes: ["edit"],
-    safetyNotes: ["Queues ingest jobs instead of blocking.", "Does not bypass media validation."],
-    inputSchema: {
-      type: "object",
-      required: ["directory", "paths"],
-      properties: {
-        directory: {
-          type: "string",
-          description: "Absolute project directory."
-        },
-        paths: {
-          type: "array",
-          description: "Absolute file or folder paths to import."
-        }
-      }
-    },
-    outputDescription: "Returns accepted paths, queued job ids, and an updated snapshot."
-  },
-  {
-    name: "clawcut.get_timeline",
-    description: "Query the current timeline/editor session state for a project.",
-    operationType: "query",
-    apiName: "timeline.session",
-    requiredScopes: ["read"],
-    safetyNotes: ["Read-only query."],
-    inputSchema: {
-      type: "object",
-      required: ["directory"],
-      properties: {
-        directory: {
-          type: "string",
-          description: "Absolute project directory."
-        }
-      }
-    },
-    outputDescription: "Returns the editor session snapshot including timeline and history."
-  },
-  {
-    name: "clawcut.seek_preview",
-    description: "Seek the active desktop preview to a timeline position.",
-    operationType: "command",
-    apiName: "preview.execute",
-    requiredScopes: ["preview"],
-    safetyNotes: ["Requires a running desktop preview session.", "Acts on the local desktop only."],
-    inputSchema: {
-      type: "object",
-      required: ["command"],
-      properties: {
-        command: {
-          type: "object",
-          description: "A typed PreviewCommand such as { type: 'SeekPreview', positionUs: 500000 }."
-        }
-      }
-    },
-    outputDescription: "Returns the typed preview command result with updated preview state."
-  },
-  {
-    name: "clawcut.transcribe_clip",
-    description: "Queue transcription for a specific clip on the timeline.",
-    operationType: "command",
-    apiName: "captions.execute",
-    requiredScopes: ["transcript"],
-    safetyNotes: ["Queues a transcription job.", "Transcription options remain request-scoped."],
-    inputSchema: {
-      type: "object",
-      required: ["directory", "command"],
-      properties: {
-        directory: {
-          type: "string",
-          description: "Absolute project directory."
-        },
-        command: {
-          type: "object",
-          description: "A CaptionCommand like { type: 'TranscribeClip', timelineId, clipId, options }."
-        }
-      }
-    },
-    outputDescription: "Returns the queued transcription run and updated caption session snapshot."
-  },
-  {
-    name: "clawcut.generate_captions",
-    description: "Generate or update a caption track from a transcript.",
-    operationType: "command",
-    apiName: "captions.execute",
-    requiredScopes: ["transcript"],
-    safetyNotes: ["Uses typed caption commands only.", "Transcript and template validation still apply."],
-    inputSchema: {
-      type: "object",
-      required: ["directory", "command"],
-      properties: {
-        directory: {
-          type: "string",
-          description: "Absolute project directory."
-        },
-        command: {
-          type: "object",
-          description: "A CaptionCommand such as GenerateCaptionTrack, RegenerateCaptionTrack, or ApplyCaptionTemplate."
-        }
-      }
-    },
-    outputDescription: "Returns the updated caption session snapshot and typed command result."
-  },
-  {
-    name: "clawcut.start_export",
-    description: "Start a deterministic export job through the render pipeline.",
-    operationType: "command",
-    apiName: "export.execute",
-    requiredScopes: ["export"],
-    safetyNotes: ["Long-running action.", "Returns job-linked export state instead of blocking."],
-    inputSchema: {
-      type: "object",
-      required: ["directory", "command"],
-      properties: {
-        directory: {
-          type: "string",
-          description: "Absolute project directory."
-        },
-        command: {
-          type: "object",
-          description: "An ExportCommand such as StartExport, CancelExport, or RetryExport."
-        }
-      }
-    },
-    outputDescription: "Returns the updated export session snapshot and typed export command result."
-  },
-  {
-    name: "clawcut.query_job",
-    description: "Query the current state and diagnostics for a job.",
-    operationType: "query",
-    apiName: "jobs.get",
-    requiredScopes: ["read"],
-    safetyNotes: ["Read-only query."],
-    inputSchema: {
-      type: "object",
-      required: ["directory", "jobId"],
-      properties: {
-        directory: {
-          type: "string",
-          description: "Absolute project directory."
-        },
-        jobId: {
-          type: "string",
-          description: "ClawCut job id."
-        }
-      }
-    },
-    outputDescription: "Returns the job plus related export or transcription run details when available."
-  }
-];
+const EVENT_STREAM_DESCRIPTOR: LocalApiEventStreamDescriptor = {
+  transport: "sse",
+  path: "/api/v1/events",
+  topics: ["jobs", "exports", "transcriptions"],
+  pollingFallback: "/api/v1/query"
+};
 
 function createApiToken(): string {
   return randomBytes(24).toString("hex");
@@ -469,37 +106,47 @@ function createDefaultConfig(): StoredLocalApiConfig {
   };
 }
 
-function createCapabilities(scopes: LocalApiScope[]): LocalApiCapabilities {
+function createPreviewFrameReference(snapshot: {
+  status: LocalApiPreviewFrameReference["status"];
+  timelineId: string | null;
+  playheadUs: number;
+  clipId: string | null;
+  sourceMode: LocalApiPreviewFrameReference["sourceMode"];
+  mimeType: string | null;
+  width: number | null;
+  height: number | null;
+  dataUrl: string | null;
+  warning: string | null;
+  error: LocalApiPreviewFrameReference["error"];
+}): LocalApiPreviewFrameReference {
   return {
-    apiVersion: LOCAL_API_VERSION,
-    localOnly: true,
-    auth: {
-      required: true,
-      scheme: "bearer",
-      headerName: "Authorization",
-      tokenPrefix: "Bearer",
-      scopes
-    },
-    endpoints: {
-      health: "/api/v1/health",
-      capabilities: "/api/v1/capabilities",
-      openClawTools: "/api/v1/openclaw/tools",
-      command: "/api/v1/command",
-      query: "/api/v1/query"
-    },
-    commands: COMMAND_DESCRIPTORS,
-    queries: QUERY_DESCRIPTORS,
-    features: {
-      project: true,
-      media: true,
-      timeline: true,
-      preview: true,
-      export: true,
-      transcript: true,
-      captions: true,
-      openClawTools: true
-    }
+    status: snapshot.status,
+    timelineId: snapshot.timelineId,
+    playheadUs: snapshot.playheadUs,
+    clipId: snapshot.clipId,
+    sourceMode: snapshot.sourceMode,
+    mimeType: snapshot.mimeType,
+    width: snapshot.width,
+    height: snapshot.height,
+    hasImageData: Boolean(snapshot.dataUrl),
+    warning: snapshot.warning,
+    error: snapshot.error
   };
+}
+
+function parseEventTopics(searchParams: URLSearchParams): LocalApiEventTopic[] {
+  const topicsParam = searchParams.get("topics");
+
+  if (!topicsParam) {
+    return [...EVENT_STREAM_DESCRIPTOR.topics];
+  }
+
+  const topics = topicsParam
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return eventStreamQuerySchema.parse({ topics }).topics;
 }
 
 function toSerializedError(error: unknown): SerializedWorkerError {
@@ -654,9 +301,11 @@ export class LocalApiController {
 
   getStatus(): LocalApiStatus {
     const config = this.config ?? createDefaultConfig();
+    const capabilities = createLocalApiCapabilities(config.scopes);
 
     return {
       apiVersion: LOCAL_API_VERSION,
+      protocolVersion: "1",
       enabled: config.enabled,
       state: this.state,
       bindAddress: config.host,
@@ -665,8 +314,10 @@ export class LocalApiController {
       token: config.token,
       tokenPreview: maskToken(config.token),
       scopes: [...config.scopes],
-      capabilities: createCapabilities(config.scopes),
-      openClawTools: OPENCLAW_TOOLS,
+      capabilities,
+      openClawTools: OPENCLAW_TOOL_DEFINITIONS,
+      openClawManifest: createOpenClawToolManifest(capabilities),
+      eventStream: EVENT_STREAM_DESCRIPTOR,
       recentRequests: [...this.recentRequests],
       lastError: this.lastError
     };
@@ -837,7 +488,8 @@ export class LocalApiController {
     const requestId = request.headers["x-request-id"]?.toString() || randomUUID();
     const receivedAt = new Date().toISOString();
     const startedAt = Date.now();
-    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const pathname = url.pathname;
 
     const fail = (
       statusCode: number,
@@ -900,6 +552,11 @@ export class LocalApiController {
         return;
       }
 
+      if (pathname === "/api/v1/events" && request.method === "GET") {
+        await this.handleEventStream(request, response, requestId, receivedAt, startedAt, url);
+        return;
+      }
+
       if (pathname === "/api/v1/capabilities" && request.method === "GET") {
         writeJson(response, 200, {
           ok: true,
@@ -921,6 +578,27 @@ export class LocalApiController {
         return;
       }
 
+      if (pathname === "/api/v1/openclaw/manifest" && request.method === "GET") {
+        writeJson(response, 200, {
+          ok: true,
+          apiVersion: LOCAL_API_VERSION,
+          requestId,
+          name: "openclaw.manifest",
+          warnings: [],
+          data: this.getStatus().openClawManifest
+        });
+        this.logRequest({
+          requestId,
+          operationType: "query",
+          name: "openclaw.manifest",
+          status: "ok",
+          errorCode: null,
+          receivedAt,
+          durationMs: Date.now() - startedAt
+        });
+        return;
+      }
+
       if (pathname === "/api/v1/openclaw/tools" && request.method === "GET") {
         writeJson(response, 200, {
           ok: true,
@@ -928,7 +606,7 @@ export class LocalApiController {
           requestId,
           name: "openclaw.tools",
           warnings: [],
-          data: OPENCLAW_TOOLS
+          data: OPENCLAW_TOOL_DEFINITIONS
         });
         this.logRequest({
           requestId,
@@ -946,19 +624,7 @@ export class LocalApiController {
         const rawBody = await readJsonBody(request);
         const parsed = z
           .object({
-            name: z.enum([
-              "project.create",
-              "project.open",
-              "project.save",
-              "media.import",
-              "media.relink",
-              "timeline.execute",
-              "preview.load-project-timeline",
-              "preview.execute",
-              "export.execute",
-              "captions.execute",
-              "jobs.retry"
-            ]),
+            name: z.string().min(1),
             input: z.unknown()
           })
           .safeParse(rawBody);
@@ -972,19 +638,29 @@ export class LocalApiController {
           return;
         }
 
-        const result = await this.executeCommand(parsed.data.name, parsed.data.input);
+        const resolvedName = resolveLocalApiCommandName(parsed.data.name);
+
+        if (!resolvedName) {
+          fail(404, parsed.data.name, {
+            code: "UNSUPPORTED_OPERATION",
+            message: `Command ${parsed.data.name} is not supported by this ClawCut build.`
+          });
+          return;
+        }
+
+        const result = await this.executeCommand(resolvedName, parsed.data.input);
         writeJson(response, 200, {
           ok: true,
           apiVersion: LOCAL_API_VERSION,
           requestId,
-          name: parsed.data.name,
+          name: resolvedName,
           warnings: [],
           data: result
         });
         this.logRequest({
           requestId,
           operationType: "command",
-          name: parsed.data.name,
+          name: resolvedName,
           status: "ok",
           errorCode: null,
           receivedAt,
@@ -997,18 +673,7 @@ export class LocalApiController {
         const rawBody = await readJsonBody(request);
         const parsed = z
           .object({
-            name: z.enum([
-              "system.toolchain",
-              "project.snapshot",
-              "timeline.session",
-              "media.snapshot",
-              "preview.state",
-              "preview.frame-snapshot",
-              "export.session",
-              "captions.session",
-              "jobs.list",
-              "jobs.get"
-            ]),
+            name: z.string().min(1),
             input: z.unknown()
           })
           .safeParse(rawBody);
@@ -1022,19 +687,29 @@ export class LocalApiController {
           return;
         }
 
-        const result = await this.executeQuery(parsed.data.name, parsed.data.input);
+        const resolvedName = resolveLocalApiQueryName(parsed.data.name);
+
+        if (!resolvedName) {
+          fail(404, parsed.data.name, {
+            code: "UNSUPPORTED_OPERATION",
+            message: `Query ${parsed.data.name} is not supported by this ClawCut build.`
+          });
+          return;
+        }
+
+        const result = await this.executeQuery(resolvedName, parsed.data.input);
         writeJson(response, 200, {
           ok: true,
           apiVersion: LOCAL_API_VERSION,
           requestId,
-          name: parsed.data.name,
+          name: resolvedName,
           warnings: [],
           data: result
         });
         this.logRequest({
           requestId,
           operationType: "query",
-          name: parsed.data.name,
+          name: resolvedName,
           status: "ok",
           errorCode: null,
           receivedAt,
@@ -1074,13 +749,144 @@ export class LocalApiController {
     }
   }
 
+  private async handleEventStream(
+    request: IncomingMessage,
+    response: ServerResponse,
+    requestId: string,
+    receivedAt: string,
+    startedAt: number,
+    url: URL
+  ): Promise<void> {
+    this.ensureAuthorizedScopes("events", ["read"]);
+
+    const parsed = eventStreamQuerySchema.parse({
+      directory: url.searchParams.get("directory") ?? undefined,
+      topics: parseEventTopics(url.searchParams)
+    });
+    const streamId = randomUUID();
+    let disposed = false;
+    let lastPayloadSignature = "";
+    let inFlight = false;
+
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    response.flushHeaders?.();
+
+    const writeEvent = (event: string, data: unknown): void => {
+      if (disposed) {
+        return;
+      }
+
+      response.write(`event: ${event}\n`);
+      response.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const publishSnapshot = async (): Promise<void> => {
+      if (disposed || inFlight || !parsed.directory) {
+        return;
+      }
+
+      inFlight = true;
+
+      try {
+        const snapshot = await this.buildEventPayload(parsed.directory, parsed.topics);
+        const signature = JSON.stringify(snapshot);
+
+        if (signature !== lastPayloadSignature) {
+          lastPayloadSignature = signature;
+          writeEvent("jobs.snapshot", snapshot);
+        }
+      } catch (error) {
+        writeEvent("error", {
+          code: "EVENT_STREAM_UPDATE_FAILED",
+          message: toSerializedError(error).message
+        });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const heartbeatTimer = setInterval(() => {
+      writeEvent("heartbeat", {
+        streamId,
+        emittedAt: new Date().toISOString()
+      });
+    }, 15_000);
+    const snapshotTimer = setInterval(() => {
+      void publishSnapshot();
+    }, 750);
+
+    const cleanup = (): void => {
+      if (disposed) {
+        return;
+      }
+
+      disposed = true;
+      clearInterval(heartbeatTimer);
+      clearInterval(snapshotTimer);
+      response.end();
+    };
+
+    request.on("close", cleanup);
+    response.on("close", cleanup);
+
+    writeEvent("ready", {
+      streamId,
+      apiVersion: LOCAL_API_VERSION,
+      topics: parsed.topics,
+      directory: parsed.directory ?? null
+    });
+    await publishSnapshot();
+    this.logRequest({
+      requestId,
+      operationType: "query",
+      name: "events",
+      status: "ok",
+      errorCode: null,
+      receivedAt,
+      durationMs: Date.now() - startedAt
+    });
+  }
+
+  private async buildEventPayload(directory: string, topics: LocalApiEventTopic[]): Promise<{
+    directory: string;
+    emittedAt: string;
+    topics: LocalApiEventTopic[];
+    jobs: Awaited<ReturnType<LocalApiWorkerGateway["getProjectSnapshot"]>>["jobs"];
+    exportRuns: Awaited<ReturnType<LocalApiWorkerGateway["getExportSessionSnapshot"]>>["exportRuns"];
+    transcriptionRuns: Awaited<
+      ReturnType<LocalApiWorkerGateway["getCaptionSessionSnapshot"]>
+    >["transcriptionRuns"];
+  }> {
+    const projectSnapshot = await this.worker.getProjectSnapshot({ directory });
+    const exportRuns = topics.includes("exports")
+      ? (await this.worker.getExportSessionSnapshot({ directory })).exportRuns
+      : [];
+    const transcriptionRuns = topics.includes("transcriptions")
+      ? (await this.worker.getCaptionSessionSnapshot({ directory })).transcriptionRuns
+      : [];
+
+    return {
+      directory,
+      emittedAt: new Date().toISOString(),
+      topics,
+      jobs: topics.includes("jobs") ? projectSnapshot.jobs : [],
+      exportRuns,
+      transcriptionRuns
+    };
+  }
+
   private async executeCommand<Name extends LocalApiCommandName>(
     name: Name,
     input: unknown
   ): Promise<unknown> {
-    const descriptor = COMMAND_DESCRIPTORS.find((entry) => entry.name === name);
+    const descriptor = getLocalApiOperationDescriptor(name);
 
-    if (!descriptor) {
+    if (!descriptor || descriptor.kind !== "command") {
       throw {
         code: "UNSUPPORTED_OPERATION",
         message: `Command ${name} is not supported by this ClawCut build.`
@@ -1088,19 +894,16 @@ export class LocalApiController {
     }
 
     this.ensureAuthorizedScopes(name, descriptor.requiredScopes);
+    const parsed = parseLocalApiCommandInput(name, input);
 
     switch (name) {
       case "project.create":
-        return this.worker.createProject(
-          createProjectSchema.parse(input) as LocalApiCommandInputMap["project.create"]
-        );
+        return this.worker.createProject(parsed as LocalApiCommandInputMap["project.create"]);
       case "project.open":
-        return this.worker.openProject(
-          directorySchema.parse(input) as LocalApiCommandInputMap["project.open"]
-        );
+        return this.worker.openProject(parsed as LocalApiCommandInputMap["project.open"]);
       case "project.save": {
-        const parsed = directorySchema.parse(input) as LocalApiCommandInputMap["project.save"];
-        const snapshot = await this.worker.getProjectSnapshot(parsed);
+        const saveInput = parsed as LocalApiCommandInputMap["project.save"];
+        const snapshot = await this.worker.getProjectSnapshot(saveInput);
 
         return {
           directory: snapshot.directory,
@@ -1110,46 +913,222 @@ export class LocalApiController {
         };
       }
       case "media.import":
-        return this.worker.importMediaPaths(
-          importMediaSchema.parse(input) as LocalApiCommandInputMap["media.import"]
-        );
+        return this.worker.importMediaPaths(parsed as LocalApiCommandInputMap["media.import"]);
       case "media.relink":
-        return this.worker.relinkMediaItem(
-          relinkMediaSchema.parse(input) as LocalApiCommandInputMap["media.relink"]
-        );
-      case "timeline.execute":
+        return this.worker.relinkMediaItem(parsed as LocalApiCommandInputMap["media.relink"]);
+      case "timeline.create":
+        return this.worker.executeEditorCommand({
+          directory: (parsed as LocalApiCommandInputMap["timeline.create"]).directory,
+          command: {
+            type: "CreateTimeline",
+            timelineId: (parsed as LocalApiCommandInputMap["timeline.create"]).timelineId
+          }
+        });
+      case "timeline.addTrack":
         return this.worker.executeEditorCommand(
-          executeEditorSchema.parse(input) as unknown as LocalApiCommandInputMap["timeline.execute"]
+          {
+            directory: (parsed as LocalApiCommandInputMap["timeline.addTrack"]).directory,
+            command: {
+              type: "AddTrack",
+              timelineId: (parsed as LocalApiCommandInputMap["timeline.addTrack"]).timelineId,
+              trackKind: (parsed as LocalApiCommandInputMap["timeline.addTrack"]).trackKind,
+              name: (parsed as LocalApiCommandInputMap["timeline.addTrack"]).name,
+              index: (parsed as LocalApiCommandInputMap["timeline.addTrack"]).index
+            }
+          }
         );
-      case "preview.load-project-timeline": {
-        const parsed =
-          previewLoadProjectSchema.parse(input) as LocalApiCommandInputMap["preview.load-project-timeline"];
+      case "timeline.insertClip":
+      case "timeline.insertLinkedMedia":
+      case "timeline.splitClip":
+      case "timeline.trimClipStart":
+      case "timeline.trimClipEnd":
+      case "timeline.moveClip":
+      case "timeline.rippleDeleteClip":
+      case "timeline.lockTrack":
+      case "timeline.unlockTrack":
+      case "timeline.setPlayhead":
+      case "timeline.undo":
+      case "timeline.redo": {
+        const {
+          directory,
+          ...commandInput
+        } = parsed as { directory: string } & Record<string, unknown>;
+        return this.worker.executeEditorCommand({
+          directory,
+          command: {
+            ...commandInput,
+            type:
+              name === "timeline.insertClip"
+                ? "InsertClip"
+                : name === "timeline.insertLinkedMedia"
+                  ? "InsertLinkedMedia"
+                  : name === "timeline.splitClip"
+                    ? "SplitClip"
+                    : name === "timeline.trimClipStart"
+                      ? "TrimClipStart"
+                      : name === "timeline.trimClipEnd"
+                        ? "TrimClipEnd"
+                        : name === "timeline.moveClip"
+                          ? "MoveClip"
+                          : name === "timeline.rippleDeleteClip"
+                            ? "RippleDeleteClip"
+                            : name === "timeline.lockTrack"
+                              ? "LockTrack"
+                              : name === "timeline.unlockTrack"
+                                ? "UnlockTrack"
+                                : name === "timeline.setPlayhead"
+                                  ? "SetPlayhead"
+                                  : name === "timeline.undo"
+                                    ? "Undo"
+                                    : "Redo"
+          } as ExecuteEditorCommandInput["command"]
+        });
+      }
+      case "preview.loadTimeline": {
+        const loadInput = parsed as LocalApiCommandInputMap["preview.loadTimeline"];
         const snapshot = await this.worker.getEditorSessionSnapshot({
-          directory: parsed.directory
+          directory: loadInput.directory
         });
 
         return this.preview.loadProjectTimeline({
           snapshot,
-          initialPlayheadUs: parsed.initialPlayheadUs,
-          preservePlayhead: parsed.preservePlayhead
+          initialPlayheadUs: loadInput.initialPlayheadUs,
+          preservePlayhead: loadInput.preservePlayhead
         });
       }
-      case "preview.execute":
+      case "preview.play":
+      case "preview.pause":
+      case "preview.seek":
+      case "preview.stepForward":
+      case "preview.stepBackward":
+      case "preview.setQuality":
         return this.preview.executeCommand(
-          previewExecuteSchema.parse(input).command as LocalApiCommandInputMap["preview.execute"]["command"]
+          name === "preview.play"
+            ? { type: "PlayPreview" }
+            : name === "preview.pause"
+              ? { type: "PausePreview" }
+              : name === "preview.seek"
+                ? {
+                    type: "SeekPreview",
+                    positionUs: (parsed as LocalApiCommandInputMap["preview.seek"]).positionUs
+                  }
+                : name === "preview.stepForward"
+                  ? { type: "StepPreviewFrameForward" }
+                  : name === "preview.stepBackward"
+                    ? { type: "StepPreviewFrameBackward" }
+                    : {
+                        type: "SetPreviewQuality",
+                        qualityMode: (parsed as LocalApiCommandInputMap["preview.setQuality"]).qualityMode
+                      }
         );
-      case "export.execute":
-        return this.worker.executeExportCommand(
-          executeExportSchema.parse(input) as LocalApiCommandInputMap["export.execute"]
-        );
-      case "captions.execute":
-        return this.worker.executeCaptionCommand(
-          executeCaptionSchema.parse(input) as unknown as LocalApiCommandInputMap["captions.execute"]
-        );
+      case "transcript.transcribeClip":
+      case "transcript.updateSegment":
+      case "captions.generateTrack":
+      case "captions.regenerateTrack":
+      case "captions.applyTemplate":
+      case "captions.updateSegment":
+      case "captions.exportSubtitles":
+      case "captions.setBurnIn": {
+        const {
+          directory,
+          ...commandInput
+        } = parsed as { directory: string } & Record<string, unknown>;
+        return this.worker.executeCaptionCommand({
+          directory,
+          command: {
+            ...commandInput,
+            type:
+              name === "transcript.transcribeClip"
+                ? "TranscribeClip"
+                : name === "transcript.updateSegment"
+                  ? "UpdateTranscriptSegment"
+                  : name === "captions.generateTrack"
+                    ? "GenerateCaptionTrack"
+                    : name === "captions.regenerateTrack"
+                      ? "RegenerateCaptionTrack"
+                      : name === "captions.applyTemplate"
+                        ? "ApplyCaptionTemplate"
+                        : name === "captions.updateSegment"
+                          ? "UpdateCaptionSegment"
+                          : name === "captions.exportSubtitles"
+                            ? "ExportSubtitleFile"
+                            : "EnableBurnInCaptionsForExport"
+          } as ExecuteCaptionCommandInput["command"]
+        });
+      }
+      case "export.createRequest":
+      case "export.compilePlan":
+      case "export.start":
+      case "export.captureSnapshot":
+      case "export.cancel":
+      case "export.retry": {
+        const exportInput = parsed as { directory: string };
+        return this.worker.executeExportCommand({
+          directory: exportInput.directory,
+          command: (
+            name === "export.createRequest"
+              ? {
+                  type: "CreateExportRequest",
+                  request: (parsed as LocalApiCommandInputMap["export.createRequest"]).request
+                }
+              : name === "export.compilePlan"
+                ? {
+                    type: "CompileRenderPlan",
+                    request: (parsed as LocalApiCommandInputMap["export.compilePlan"]).request
+                  }
+                : name === "export.start"
+                  ? {
+                      type: "StartExport",
+                      request: (parsed as LocalApiCommandInputMap["export.start"]).request
+                    }
+                  : name === "export.captureSnapshot"
+                    ? {
+                        type: "CaptureExportSnapshot",
+                        request: (parsed as LocalApiCommandInputMap["export.captureSnapshot"]).request
+                      }
+                    : name === "export.cancel"
+                      ? {
+                          type: "CancelExport",
+                          exportRunId: (parsed as LocalApiCommandInputMap["export.cancel"]).exportRunId
+                        }
+                      : {
+                          type: "RetryExport",
+                          exportRunId: (parsed as LocalApiCommandInputMap["export.retry"]).exportRunId
+                        }
+          ) as ExecuteExportCommandInput["command"]
+        });
+      }
       case "jobs.retry":
-        return this.worker.retryJob(
-          retryJobSchema.parse(input) as LocalApiCommandInputMap["jobs.retry"]
-        );
+        return this.worker.retryJob(parsed as LocalApiCommandInputMap["jobs.retry"]);
+      case "jobs.cancel": {
+        const cancelInput = parsed as LocalApiCommandInputMap["jobs.cancel"];
+        const snapshot = await this.worker.getProjectSnapshot({
+          directory: cancelInput.directory
+        });
+        const job = snapshot.jobs.find((entry) => entry.id === cancelInput.jobId);
+
+        if (!job) {
+          throw {
+            code: "JOB_NOT_FOUND",
+            message: `Job ${cancelInput.jobId} was not found.`
+          };
+        }
+
+        if (job.kind !== "export" || !job.exportRunId) {
+          throw {
+            code: "JOB_CANCEL_UNSUPPORTED",
+            message: `Job ${cancelInput.jobId} does not support cancellation through the local control surface.`
+          };
+        }
+
+        return this.worker.executeExportCommand({
+          directory: cancelInput.directory,
+          command: {
+            type: "CancelExport",
+            exportRunId: job.exportRunId
+          }
+        });
+      }
     }
   }
 
@@ -1157,9 +1136,9 @@ export class LocalApiController {
     name: Name,
     input: unknown
   ): Promise<unknown> {
-    const descriptor = QUERY_DESCRIPTORS.find((entry) => entry.name === name);
+    const descriptor = getLocalApiOperationDescriptor(name);
 
-    if (!descriptor) {
+    if (!descriptor || descriptor.kind !== "query") {
       throw {
         code: "UNSUPPORTED_OPERATION",
         message: `Query ${name} is not supported by this ClawCut build.`
@@ -1167,21 +1146,39 @@ export class LocalApiController {
     }
 
     this.ensureAuthorizedScopes(name, descriptor.requiredScopes);
+    const parsed = parseLocalApiQueryInput(name, input);
 
     switch (name) {
       case "system.toolchain":
         return this.worker.detectToolchain();
-      case "project.snapshot":
-        return this.worker.getProjectSnapshot(
-          directorySchema.parse(input) as LocalApiQueryInputMap["project.snapshot"]
-        );
-      case "timeline.session":
-        return this.worker.getEditorSessionSnapshot(
-          directorySchema.parse(input) as LocalApiQueryInputMap["timeline.session"]
-        );
-      case "media.snapshot": {
+      case "project.summary": {
         const snapshot = await this.worker.getProjectSnapshot(
-          directorySchema.parse(input) as LocalApiQueryInputMap["media.snapshot"]
+          parsed as LocalApiQueryInputMap["project.summary"]
+        );
+        const exportSession = await this.worker.getExportSessionSnapshot({
+          directory: snapshot.directory
+        });
+        const captionSession = await this.worker.getCaptionSessionSnapshot({
+          directory: snapshot.directory
+        });
+
+        return buildProjectSummary({
+          directory: snapshot.directory,
+          projectFilePath: snapshot.projectFilePath,
+          projectName: snapshot.document.project.name,
+          timelineId: snapshot.document.timeline.id,
+          mediaItemCount: snapshot.libraryItems.length,
+          jobCount: snapshot.jobs.length,
+          transcriptCount: captionSession.transcripts.length,
+          captionTrackCount: captionSession.captionTracks.length,
+          exportRunCount: exportSession.exportRuns.length
+        });
+      }
+      case "project.snapshot":
+        return this.worker.getProjectSnapshot(parsed as LocalApiQueryInputMap["project.snapshot"]);
+      case "media.list": {
+        const snapshot = await this.worker.getProjectSnapshot(
+          parsed as LocalApiQueryInputMap["media.list"]
         );
 
         return {
@@ -1190,38 +1187,69 @@ export class LocalApiController {
           jobs: snapshot.jobs
         };
       }
+      case "media.inspect": {
+        const inspectInput = parsed as LocalApiQueryInputMap["media.inspect"];
+        const snapshot = await this.worker.getProjectSnapshot({
+          directory: inspectInput.directory
+        });
+        return snapshot.libraryItems.find((item) => item.id === inspectInput.mediaItemId) ?? null;
+      }
+      case "timeline.get":
+        return this.worker.getEditorSessionSnapshot(parsed as LocalApiQueryInputMap["timeline.get"]);
       case "preview.state":
         return this.preview.getPreviewState();
       case "preview.frame-snapshot":
         return this.preview.captureFrameSnapshot(
-          previewFrameSnapshotSchema.parse(input).options
+          (parsed as LocalApiQueryInputMap["preview.frame-snapshot"]).options
         );
+      case "preview.frame-reference": {
+        const snapshot = await this.preview.captureFrameSnapshot(
+          (parsed as LocalApiQueryInputMap["preview.frame-reference"]).options
+        );
+        return createPreviewFrameReference(snapshot);
+      }
       case "export.session":
-        return this.worker.getExportSessionSnapshot(
-          directorySchema.parse(input) as LocalApiQueryInputMap["export.session"]
-        );
+        return this.worker.getExportSessionSnapshot(parsed as LocalApiQueryInputMap["export.session"]);
+      case "transcript.get":
+        return (
+          await this.worker.executeCaptionCommand({
+            directory: (parsed as LocalApiQueryInputMap["transcript.get"]).directory,
+            command: {
+              type: "QueryTranscriptStatus",
+              transcriptId: (parsed as LocalApiQueryInputMap["transcript.get"]).transcriptId
+            }
+          })
+        ).result;
       case "captions.session":
-        return this.worker.getCaptionSessionSnapshot(
-          directorySchema.parse(input) as LocalApiQueryInputMap["captions.session"]
-        );
+        return this.worker.getCaptionSessionSnapshot(parsed as LocalApiQueryInputMap["captions.session"]);
+      case "captions.track":
+        return (
+          await this.worker.executeCaptionCommand({
+            directory: (parsed as LocalApiQueryInputMap["captions.track"]).directory,
+            command: {
+              type: "QueryCaptionTrackState",
+              captionTrackId: (parsed as LocalApiQueryInputMap["captions.track"]).captionTrackId
+            }
+          })
+        ).result;
       case "jobs.list": {
         const snapshot = await this.worker.getProjectSnapshot(
-          directorySchema.parse(input) as LocalApiQueryInputMap["jobs.list"]
+          parsed as LocalApiQueryInputMap["jobs.list"]
         );
         return snapshot.jobs;
       }
       case "jobs.get": {
-        const parsed = jobDetailsSchema.parse(input) as LocalApiQueryInputMap["jobs.get"];
+        const jobInput = parsed as LocalApiQueryInputMap["jobs.get"];
         const snapshot = await this.worker.getProjectSnapshot({
-          directory: parsed.directory
+          directory: jobInput.directory
         });
-        const job = snapshot.jobs.find((entry) => entry.id === parsed.jobId) ?? null;
+        const job = snapshot.jobs.find((entry) => entry.id === jobInput.jobId) ?? null;
         let exportRun: LocalApiJobDetails["exportRun"] = null;
         let transcriptionRun: LocalApiJobDetails["transcriptionRun"] = null;
 
         if (job?.kind === "export") {
           const exportSnapshot = await this.worker.getExportSessionSnapshot({
-            directory: parsed.directory
+            directory: jobInput.directory
           });
           exportRun =
             exportSnapshot.exportRuns.find((entry) => entry.id === job.exportRunId) ?? null;
@@ -1229,7 +1257,7 @@ export class LocalApiController {
 
         if (job?.kind === "transcription") {
           const captionSnapshot = await this.worker.getCaptionSessionSnapshot({
-            directory: parsed.directory
+            directory: jobInput.directory
           });
           transcriptionRun =
             captionSnapshot.transcriptionRuns.find(

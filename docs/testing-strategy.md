@@ -88,9 +88,12 @@ Stage 7 adds HTTP-level tests around the authenticated local control surface:
 - unauthenticated requests rejected with structured auth errors
 - malformed request envelopes rejected with structured validation errors
 - scope enforcement for mutating and privileged actions
+- canonical operation-schema validation
 - command dispatch for project, export, and caption operations
-- query dispatch for timeline, preview, and job state
-- capability discovery and OpenClaw tool-manifest discovery
+- query dispatch for timeline, preview, preview-frame inspection, and job state
+- capability discovery, OpenClaw tool discovery, and OpenClaw manifest discovery
+- OpenClaw plugin adapter mapping
+- authenticated SSE event-stream updates
 - job-detail queries resolve related export and transcription runs
 
 These tests run against the real local API server class on an ephemeral localhost port with fake worker and preview bridges.
@@ -102,8 +105,9 @@ Smoke verification launches the built Electron app and drives the desktop shell 
 1. create a temp project
 2. wait for the local API to report a running authenticated control surface
 3. verify unauthenticated capability requests are rejected
-4. verify authenticated capabilities and OpenClaw tool discovery
-5. open the project through the local API
+4. verify authenticated capabilities, OpenClaw tool discovery, and OpenClaw manifest discovery
+5. verify the thin OpenClaw adapter can read the manifest
+6. open the project through the local control surface
 6. import a temp-copied sample video through the local API
 7. wait for ingest and derived jobs to settle through the local API
 8. verify metadata and waveform UI render
@@ -114,20 +118,22 @@ Smoke verification launches the built Electron app and drives the desktop shell 
 13. verify fast mode prefers proxies
 14. verify standard mode prefers originals
 15. seek, play, pause, and frame-step through preview
-16. query timeline state through the local API
-17. transcribe the selected clip through the local API using the fixture transcription adapter
-18. verify transcription job details are queryable through the local API
-19. generate a caption track through the local API
-20. load preview and seek through the local API, then verify a preview caption overlay appears
-21. export an SRT sidecar through the local API
-22. enable burn-in captions through the local API
-23. queue a burn-in video export through the local API and verify the output is probeable
-24. query export job progress through the local API
-25. capture a still frame from the completed export through the local API
-26. queue an audio export through the local API and verify the output contains audio
-27. capture a still frame from a selected timeline position through the local API
-28. reopen the project and verify the timeline persisted
-29. capture a screenshot artifact
+16. verify the authenticated local event stream emits `ready` and `jobs.snapshot`
+17. query timeline state through the OpenClaw adapter or local transport
+18. inspect the current preview frame through the local API
+19. transcribe the selected clip through the OpenClaw adapter using the fixture transcription adapter
+20. verify transcription job details are queryable through the local API
+21. generate a caption track through the OpenClaw adapter
+22. load preview and seek through the local API, then verify a preview caption overlay appears
+23. export an SRT sidecar through the local API
+24. enable burn-in captions through the local API
+25. queue a burn-in video export through the OpenClaw adapter and verify the output is probeable
+26. query export job progress through the OpenClaw adapter or local transport
+27. capture a still frame from the completed export through the local API
+28. queue an audio export through the local API and verify the output contains audio
+29. capture a still frame from a selected timeline position through the local API
+30. reopen the project and verify the timeline persisted
+31. capture a screenshot artifact
 
 This keeps smoke focused on the highest-value integrated editor workflow while still avoiding fragile OS dialog automation for every interaction.
 

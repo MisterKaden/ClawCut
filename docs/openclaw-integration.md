@@ -1,110 +1,128 @@
-# OpenClaw Integration Foundation
+# OpenClaw Integration
 
-## Goal
+## Stage 7 stance
 
-Stage 7 makes Clawcut usable as a local programmable media engine for OpenClaw.
+Clawcut is now OpenClaw-plugin-first.
 
-The integration boundary is:
+The intended layering is:
 
-- explicit
-- authenticated
-- machine-readable
-- layered above trusted Clawcut services
+1. Clawcut command/query schema registry
+2. Clawcut OpenClaw adapter package
+3. local authenticated transport
 
-OpenClaw should not need to drive the desktop UI by simulating clicks or reading pixels to perform normal automation work.
+OpenClaw should treat the HTTP surface as an implementation detail behind the shared schema/tool contract, not as the thing to reverse-engineer.
 
-## Discovery
+## Package boundary
 
-OpenClaw discovers Clawcut capabilities through:
+The OpenClaw adapter package is:
 
-- `GET /api/v1/capabilities`
-- `GET /api/v1/openclaw/tools`
+- [packages/openclaw-plugin](/Users/winten/Developer/KPStudio/packages/openclaw-plugin)
 
-These endpoints advertise:
+It is intentionally thin:
 
-- protocol version
-- auth requirements
-- supported command/query categories
-- required scopes
-- tool names
-- input schema summaries
-- output expectations
+- it imports tool and operation metadata from [control-schema.ts](/Users/winten/Developer/KPStudio/packages/ipc/src/control-schema.ts)
+- it authenticates against the local control transport
+- it maps tool invocations to canonical command/query requests
+- it does not implement editor, preview, caption, or export business logic itself
 
-## Current tool surface
+## Tool surface
 
-Stage 7 publishes tool definitions for:
+Current tool coverage includes:
 
 - `clawcut.open_project`
+- `clawcut.get_project_summary`
+- `clawcut.save_project`
 - `clawcut.import_media`
+- `clawcut.list_media`
+- `clawcut.inspect_media`
+- `clawcut.relink_media`
 - `clawcut.get_timeline`
+- `clawcut.insert_clip`
+- `clawcut.split_clip`
+- `clawcut.trim_clip`
+- `clawcut.move_clip`
+- `clawcut.load_preview`
 - `clawcut.seek_preview`
+- `clawcut.get_preview_state`
+- `clawcut.capture_preview_frame`
 - `clawcut.transcribe_clip`
+- `clawcut.get_transcript`
 - `clawcut.generate_captions`
+- `clawcut.apply_caption_template`
+- `clawcut.export_subtitles`
 - `clawcut.start_export`
 - `clawcut.query_job`
+- `clawcut.list_jobs`
+- `clawcut.cancel_job`
 
-These are intentionally mapped to underlying API command/query names instead of inventing a second tool-only execution layer.
+Each tool carries:
 
-## Example automation flow
-
-Typical OpenClaw-compatible workflow:
-
-1. call `clawcut.open_project`
-2. query timeline or media state
-3. call `clawcut.transcribe_clip`
-4. poll `clawcut.query_job`
-5. call `clawcut.generate_captions`
-6. optionally control preview seek/load through preview commands
-7. call `clawcut.start_export`
-8. poll `clawcut.query_job` or `export.session`
-9. inspect final output path and diagnostics
+- category
+- description
+- operation type
+- canonical operation name
+- safety class
+- mutability class
+- sync vs job execution
+- required scopes
+- machine-readable input schema
+- result contract summary
 
 ## Safety model
 
-OpenClaw uses the same Clawcut safety rules as the UI:
+OpenClaw tools expose explicit impact classes:
 
-- timeline edits still pass through the typed command engine
-- preview control still passes through the preview bridge
-- transcription still uses the caption session and job system
-- export still uses the render compiler and export session
-- filesystem-sensitive operations still require explicit validated inputs
+- `read-only`
+- `mutating`
+- `high-impact`
 
-This prevents OpenClaw from bypassing project validation rules simply because it is programmatic.
+High-impact examples:
 
-## Preview notes
+- `clawcut.import_media`
+- `clawcut.relink_media`
+- `clawcut.transcribe_clip`
+- `clawcut.start_export`
+- `clawcut.cancel_job`
 
-Preview control is exposed through the local API, but the current runtime still depends on the active desktop session and renderer-backed preview adapter. That is enough for local automation, but it is not yet a headless render-preview backend.
+This is intended for future allowlisting and policy controls. The current local transport already enforces auth scopes, and the same metadata is available to the tool manifest.
 
-## Jobs and polling
+## Discovery
 
-OpenClaw should treat long-running actions as asynchronous:
+Discovery paths:
 
-- import
-- transcription
-- export
+- `GET /api/v1/capabilities`
+- `GET /api/v1/openclaw/tools`
+- `GET /api/v1/openclaw/manifest`
 
-Recommended polling paths:
+The manifest includes:
 
-- `jobs.get`
-- `jobs.list`
-- `captions.session`
-- `export.session`
+- API version
+- protocol version
+- auth requirements
+- capability availability
+- endpoint map
+- full tool list
 
-## Current limitations
+## Example workflow
 
-- no remote or cloud-facing API
-- no multi-user auth model
-- preview requires a live desktop window
-- event streaming is not implemented yet; polling is the supported integration model
-- tool discovery is stable enough for local automation, not a final public plugin marketplace contract
+1. `clawcut.open_project`
+2. `clawcut.list_media`
+3. `clawcut.get_timeline`
+4. `clawcut.transcribe_clip`
+5. poll `clawcut.query_job` or subscribe to `GET /api/v1/events`
+6. `clawcut.generate_captions`
+7. `clawcut.capture_preview_frame`
+8. `clawcut.start_export`
+9. poll `clawcut.query_job`
+10. inspect `export.session` or returned export state for the final output path
 
-## How later stages build on this
+## Preview note
 
-Stage 8 hardening should add:
+Preview inspection and preview control are available to OpenClaw, but the current backend still depends on a live desktop window. Stage 7 makes this controllable and observable, not headless.
 
-- stronger diagnostics and request logging
-- packaged-build validation for the local API path
-- migration coverage for external payload compatibility
-- performance budgets for automation-heavy workflows
+## Known limitations
 
-Later smart-editing and OpenClaw orchestration stages can reuse the same authenticated tool and API boundary instead of introducing another control plane.
+- the current adapter is a local package scaffold, not a marketplace-distributed plugin
+- the local transport is still required underneath the adapter
+- event updates are lightweight SSE snapshots, not a durable workflow bus
+- compatibility versioning is explicit, but still early-stage and local-first

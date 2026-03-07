@@ -286,13 +286,36 @@
       - `data` or structured `error`
   - Reason: automation clients need one consistent machine-readable contract and a practical versioning stance before the control surface grows.
 
-## OpenClaw tool manifest
+## OpenClaw plugin-first schema layer
 
-- Publish an explicit OpenClaw tool-discovery layer from the same local API boundary.
+- Make the shared command/query registry the authoritative Stage 7 integration contract, then let both the local transport and the OpenClaw adapter consume it.
   - Decision:
-    - `GET /api/v1/openclaw/tools`
-    - tool entries declare name, description, required scopes, input schema summary, and output expectations
-  - Reason: OpenClaw should be able to discover what Clawcut can do without scraping docs or reverse-engineering UI affordances.
+    - canonical operation metadata lives in `packages/ipc/src/control-schema.ts`
+    - the OpenClaw adapter package consumes that registry directly
+    - the local HTTP transport mirrors the same registry at `/api/v1/openclaw/tools` and `/api/v1/openclaw/manifest`
+    - operations and tools explicitly declare safety class, mutability, and sync vs job behavior
+  - Reason: OpenClaw should be able to discover what Clawcut can do without scraping docs or reverse-engineering UI affordances, and the local transport should not become the source of truth.
+
+## Preview frame inspection for automation
+
+- Keep both a rich preview-frame snapshot and a lighter metadata-only frame reference on the API surface.
+  - Decision:
+    - `preview.frame-snapshot` returns the current structured preview frame, including image data when available
+    - `preview.frame-reference` strips that down to timing, clip identity, source mode, dimensions, and error/warning state
+  - Reason: some automation callers need actual frame payloads, but many OpenClaw workflows only need a cheap structured reference to reason about current visual state.
+
+## Local event stream
+
+- Add a lightweight authenticated SSE stream for job-related updates.
+  - Decision:
+    - `GET /api/v1/events`
+    - local, token-authenticated, scope-gated
+    - current event types:
+      - `ready`
+      - `jobs.snapshot`
+      - `heartbeat`
+    - `jobs.snapshot` carries current jobs plus related export and transcription runs for the requested project directory
+  - Reason: OpenClaw should not have to rely exclusively on polling for long-running media operations, but Stage 7 does not need a full durable message bus.
 
 ## Caption generation strategy
 

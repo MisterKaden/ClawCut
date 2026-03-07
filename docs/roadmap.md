@@ -90,17 +90,23 @@ Current Stage 6 notes:
 - caption grouping is one transcript segment at a time
 - burn-in export keeps ASS artifacts and uses rasterized overlay fallback when local FFmpeg subtitle filters are unavailable
 
-## Stage 7: Local API and OpenClaw foundations
+## Stage 7: Plugin-first local control and OpenClaw foundations
 
 Status: complete
 
 Acceptance criteria:
 
-- local authenticated API exists
+- shared command/query schema layer exists and is versioned
+- local authenticated transport exists
 - project, media, timeline, preview, export, transcript, caption, and job workflows are callable through typed command/query requests
 - request and response envelopes are structured and versioned
 - auth failures, validation failures, and scope failures are explicit
+- safety classes and mutability classes are explicit
 - capability discovery and OpenClaw tool discovery exist
+- OpenClaw manifest export exists
+- thin OpenClaw adapter package exists
+- lightweight local event stream exists for job/export/transcription updates
+- preview frame inspection is exposed through the automation surface
 - long-running actions return machine-readable job-linked state
 - UI surfaces the local API status and token
 

@@ -959,13 +959,13 @@ export function App() {
         <div className="hero__backdrop" />
         <div className="hero__masthead">
           <div>
-            <p className="eyebrow">Clawcut / Stage 7 local automation API</p>
+            <p className="eyebrow">Clawcut / Stage 7 OpenClaw integration</p>
             <h1>Run Clawcut as a local, authenticated media engine for OpenClaw and trusted tools.</h1>
             <p className="lede">
               Stage 7 keeps the command, preview, export, transcript, and caption foundations intact
-              while adding a local authenticated control surface, capability discovery, request
-              logging, and an OpenClaw-ready tool manifest that can drive the same trusted pathways
-              as the desktop UI.
+              while promoting the shared command/query schema to the primary integration contract.
+              The local transport and the OpenClaw plugin adapter both sit on top of that same
+              trusted control layer instead of inventing separate business logic.
             </p>
           </div>
 
@@ -1096,8 +1096,8 @@ export function App() {
         <section className="status-board local-api-panel" data-testid="local-api-panel">
           <header className="panel-header">
             <div>
-              <p className="eyebrow eyebrow--muted">Local API</p>
-              <h2>Authenticated control surface</h2>
+              <p className="eyebrow eyebrow--muted">Local control transport</p>
+              <h2>Authenticated OpenClaw bridge</h2>
             </div>
             <span
               className={
@@ -1163,12 +1163,20 @@ export function App() {
           </div>
 
           <p className="status-panel__hint">
-            Use the bearer token with the local HTTP endpoints for authenticated automation. The
-            OpenClaw tool manifest is served at
+            Use the bearer token with the local HTTP transport for authenticated automation. The
+            shared OpenClaw tool registry is mirrored at
             {" "}
             <code>/api/v1/openclaw/tools</code>
+            {", "}
+            the machine-readable manifest is served at
             {" "}
-            when the API is running.
+            <code>/api/v1/openclaw/manifest</code>
+            {", "}
+            and the local event stream is available at
+            {" "}
+            <code>{localApiStatus?.eventStream.path ?? "/api/v1/events"}</code>
+            {" "}
+            when the transport is running.
           </p>
 
           {localApiStatus?.recentRequests.length ? (

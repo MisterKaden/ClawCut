@@ -4,11 +4,46 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { _electron as electron, type Page } from "playwright";
+import { ClawcutOpenClawClient } from "@clawcut/openclaw-plugin";
 
 interface LocalApiSmokeStatus {
   baseUrl: string;
   token: string;
   state: string;
+}
+
+async function readEventStreamChunk(
+  response: Response,
+  expectedFragments: string[],
+  timeoutMs = 4_000
+): Promise<string> {
+  if (!response.body) {
+    throw new Error("Expected an SSE response body.");
+  }
+
+  const reader = response.body.getReader();
+  const startedAt = Date.now();
+  let output = "";
+
+  try {
+    while (Date.now() - startedAt < timeoutMs) {
+      const { value, done } = await reader.read();
+
+      if (done || !value) {
+        break;
+      }
+
+      output += new TextDecoder().decode(value);
+
+      if (expectedFragments.every((fragment) => output.includes(fragment))) {
+        return output;
+      }
+    }
+
+    throw new Error(`Event stream did not emit ${expectedFragments.join(", ")} within timeout.`);
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
 }
 
 async function waitForPreviewLoaded(page: Page, timelineId: string): Promise<void> {
@@ -268,6 +303,10 @@ async function runSmoke(): Promise<void> {
     }
 
     const localApi = await waitForLocalApiReady(page);
+    const openClawClient = new ClawcutOpenClawClient({
+      baseUrl: localApi.baseUrl,
+      token: localApi.token
+    });
     const health = await requestLocalApi<{ ok: boolean; data: { status: string } }>(
       localApi,
       "/api/v1/health"
@@ -278,7 +317,11 @@ async function runSmoke(): Promise<void> {
     }>(localApi, "/api/v1/capabilities");
     const capabilities = await requestLocalApi<{
       ok: boolean;
-      data: { apiVersion: string; features: { openClawTools: boolean } };
+      data: {
+        apiVersion: string;
+        protocolVersion: string;
+        features: { openClawTools: boolean; openClawPlugin: boolean };
+      };
     }>(localApi, "/api/v1/capabilities", {
       token: localApi.token
     });
@@ -286,6 +329,17 @@ async function runSmoke(): Promise<void> {
       ok: boolean;
       data: Array<{ name: string }>;
     }>(localApi, "/api/v1/openclaw/tools", {
+      token: localApi.token
+    });
+    const openClawManifest = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        manifestVersion: string;
+        protocolVersion: string;
+        endpoints: { events: string; openClawManifest: string };
+        capabilityAvailability: { eventStream: boolean; openClawPlugin: boolean };
+      };
+    }>(localApi, "/api/v1/openclaw/manifest", {
       token: localApi.token
     });
 
@@ -304,7 +358,9 @@ async function runSmoke(): Promise<void> {
       capabilities.status !== 200 ||
       !capabilities.body.ok ||
       capabilities.body.data.apiVersion !== "v1" ||
-      !capabilities.body.data.features.openClawTools
+      capabilities.body.data.protocolVersion !== "1" ||
+      !capabilities.body.data.features.openClawTools ||
+      !capabilities.body.data.features.openClawPlugin
     ) {
       throw new Error("Local API capabilities did not describe the Stage 7 control surface.");
     }
@@ -312,9 +368,30 @@ async function runSmoke(): Promise<void> {
     if (
       openClawTools.status !== 200 ||
       !openClawTools.body.ok ||
-      !openClawTools.body.data.some((tool) => tool.name === "clawcut.open_project")
+      !openClawTools.body.data.some((tool) => tool.name === "clawcut.open_project") ||
+      !openClawTools.body.data.some((tool) => tool.name === "clawcut.capture_preview_frame")
     ) {
       throw new Error("OpenClaw tool discovery was not exposed through the local API.");
+    }
+
+    if (
+      openClawManifest.status !== 200 ||
+      !openClawManifest.body.ok ||
+      openClawManifest.body.data.manifestVersion !== "1" ||
+      openClawManifest.body.data.protocolVersion !== "1" ||
+      !openClawManifest.body.data.capabilityAvailability.eventStream ||
+      !openClawManifest.body.data.capabilityAvailability.openClawPlugin
+    ) {
+      throw new Error("OpenClaw manifest discovery was not exposed through the local API.");
+    }
+
+    const pluginManifest = await openClawClient.getManifest();
+
+    if (
+      !pluginManifest.ok ||
+      !pluginManifest.data.tools.some((tool) => tool.name === "clawcut.start_export")
+    ) {
+      throw new Error("The OpenClaw plugin client could not resolve the tool manifest.");
     }
 
     const openedViaApi = await requestLocalApi<{ ok: boolean; data: { directory: string } }>(
@@ -353,6 +430,28 @@ async function runSmoke(): Promise<void> {
 
     if (!importViaApi.body.ok || !importViaApi.body.data.acceptedPaths.includes(originalPath)) {
       throw new Error("Importing media through the local API failed.");
+    }
+
+    const eventStreamResponse = await fetch(
+      `${localApi.baseUrl}${openClawManifest.body.data.endpoints.events}?directory=${encodeURIComponent(projectDirectory)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${localApi.token}`
+        }
+      }
+    );
+
+    if (eventStreamResponse.status !== 200) {
+      throw new Error("The local event stream was not available.");
+    }
+
+    const eventChunk = await readEventStreamChunk(eventStreamResponse, [
+      "event: ready",
+      "event: jobs.snapshot"
+    ]);
+
+    if (!eventChunk.includes("event: ready") || !eventChunk.includes("event: jobs.snapshot")) {
+      throw new Error("The local event stream did not emit the expected ready and jobs events.");
     }
 
     await page.getByTestId("open-project-button").click();
@@ -521,6 +620,36 @@ async function runSmoke(): Promise<void> {
       throw new Error("Preview playhead did not advance during playback.");
     }
 
+    const previewFrameReference = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        status: string;
+        timelineId: string | null;
+        clipId: string | null;
+        hasImageData: boolean;
+        error: { code?: string; message?: string } | null;
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "preview.frame-reference",
+        input: {
+          options: {
+            maxWidth: 320
+          }
+        }
+      }
+    });
+
+    if (
+      !previewFrameReference.body.ok ||
+      !previewFrameReference.body.data.timelineId ||
+      previewFrameReference.body.data.status === "error"
+    ) {
+      throw new Error("Preview frame inspection was not exposed through the local API.");
+    }
+
     await page.evaluate(async () => {
       await window.clawcutPreview.executeCommand({
         type: "StepPreviewFrameForward"
@@ -558,29 +687,26 @@ async function runSmoke(): Promise<void> {
     }
 
     await page.getByTestId("caption-panel").waitFor({ state: "visible" });
-    const timelineSessionViaApi = await requestLocalApi<{
-      ok: boolean;
-      data: {
-        timeline: {
-          id: string;
-          trackOrder: string[];
-          tracksById: Record<string, { kind: string; clipIds: string[] }>;
-        };
+    const timelineSessionViaTool = await openClawClient.invokeTool<{
+      timeline: {
+        id: string;
+        trackOrder: string[];
+        tracksById: Record<string, { kind: string; clipIds: string[] }>;
       };
-    }>(localApi, "/api/v1/query", {
-      method: "POST",
-      token: localApi.token,
-      body: {
-        name: "timeline.session",
-        input: {
-          directory: projectDirectory
-        }
-      }
+    }>("clawcut.get_timeline", {
+      directory: projectDirectory
     });
 
-    if (!timelineSessionViaApi.body.ok) {
-      throw new Error("Timeline session query failed through the local API.");
+    if (!timelineSessionViaTool.response.ok) {
+      throw new Error("Timeline query failed through the OpenClaw plugin boundary.");
     }
+
+    const timelineSessionViaApi = {
+      body: {
+        ok: timelineSessionViaTool.response.ok,
+        data: timelineSessionViaTool.response.ok ? timelineSessionViaTool.response.data : null
+      }
+    };
 
     const videoTrackId = timelineSessionViaApi.body.data.timeline.trackOrder.find((trackId) => {
       return timelineSessionViaApi.body.data.timeline.tracksById[trackId]?.kind === "video";
@@ -593,41 +719,29 @@ async function runSmoke(): Promise<void> {
       throw new Error("The Stage 7 API smoke could not resolve a video clip for transcription.");
     }
 
-    const transcribeViaApi = await requestLocalApi<{
-      ok: boolean;
-      data: {
-        result: {
-          ok: boolean;
-          commandType: string;
-          run: { id: string; jobId: string };
-        };
+    const transcribeViaTool = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        run: { id: string; jobId: string };
       };
-    }>(localApi, "/api/v1/command", {
-      method: "POST",
-      token: localApi.token,
-      body: {
-        name: "captions.execute",
-        input: {
-          directory: projectDirectory,
-          command: {
-            type: "TranscribeClip",
-            timelineId: timelineSessionViaApi.body.data.timeline.id,
-            clipId: videoClipId,
-            options: {
-              initialPrompt: "Prefer the ClawCut, OpenClaw, and KPStudio names.",
-              glossaryTerms: ["ClawCut", "OpenClaw", "KPStudio"]
-            }
-          }
-        }
+    }>("clawcut.transcribe_clip", {
+      directory: projectDirectory,
+      timelineId: timelineSessionViaApi.body.data.timeline.id,
+      clipId: videoClipId,
+      options: {
+        initialPrompt: "Prefer the ClawCut, OpenClaw, and KPStudio names.",
+        glossaryTerms: ["ClawCut", "OpenClaw", "KPStudio"]
       }
     });
 
     if (
-      !transcribeViaApi.body.ok ||
-      !transcribeViaApi.body.data.result.ok ||
-      transcribeViaApi.body.data.result.commandType !== "TranscribeClip"
+      !transcribeViaTool.response.ok ||
+      !transcribeViaTool.response.data.result.ok ||
+      transcribeViaTool.response.data.result.commandType !== "TranscribeClip"
     ) {
-      throw new Error("Transcribing through the local API failed.");
+      throw new Error("Transcribing through the OpenClaw plugin boundary failed.");
     }
 
     const initialTranscriptionJob = await requestLocalApi<{
@@ -643,7 +757,7 @@ async function runSmoke(): Promise<void> {
         name: "jobs.get",
         input: {
           directory: projectDirectory,
-          jobId: transcribeViaApi.body.data.result.run.jobId
+          jobId: transcribeViaTool.response.data.result.run.jobId
         }
       }
     });
@@ -659,7 +773,7 @@ async function runSmoke(): Promise<void> {
     const completedTranscription = await waitForTranscriptionToFinishViaApi(
       localApi,
       projectDirectory,
-      transcribeViaApi.body.data.result.run.jobId
+      transcribeViaTool.response.data.result.run.jobId
     );
 
     if (completedTranscription.status !== "completed" || !completedTranscription.transcriptId) {
@@ -670,38 +784,26 @@ async function runSmoke(): Promise<void> {
 
     await page.getByTestId("transcript-segment-list").waitFor({ state: "visible" });
     await page.getByTestId("transcript-summary").waitFor({ state: "visible" });
-    const generatedCaptionTrack = await requestLocalApi<{
-      ok: boolean;
-      data: {
-        result: {
-          ok: boolean;
-          commandType: string;
-          captionTrack: { id: string };
-        };
+    const generatedCaptionTrack = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        captionTrack: { id: string };
       };
-    }>(localApi, "/api/v1/command", {
-      method: "POST",
-      token: localApi.token,
-      body: {
-        name: "captions.execute",
-        input: {
-          directory: projectDirectory,
-          command: {
-            type: "GenerateCaptionTrack",
-            timelineId: timelineSessionViaApi.body.data.timeline.id,
-            transcriptId: completedTranscription.transcriptId,
-            templateId: "bottom-center-clean"
-          }
-        }
-      }
+    }>("clawcut.generate_captions", {
+      directory: projectDirectory,
+      timelineId: timelineSessionViaApi.body.data.timeline.id,
+      transcriptId: completedTranscription.transcriptId,
+      templateId: "bottom-center-clean"
     });
 
     if (
-      !generatedCaptionTrack.body.ok ||
-      !generatedCaptionTrack.body.data.result.ok ||
-      generatedCaptionTrack.body.data.result.commandType !== "GenerateCaptionTrack"
+      !generatedCaptionTrack.response.ok ||
+      !generatedCaptionTrack.response.data.result.ok ||
+      generatedCaptionTrack.response.data.result.commandType !== "GenerateCaptionTrack"
     ) {
-      throw new Error("Generating a caption track through the local API failed.");
+      throw new Error("Generating a caption track through the OpenClaw plugin boundary failed.");
     }
 
     await page.getByTestId("caption-segment-list").waitFor({ state: "visible" });
@@ -744,7 +846,7 @@ async function runSmoke(): Promise<void> {
       method: "POST",
       token: localApi.token,
       body: {
-        name: "preview.load-project-timeline",
+        name: "preview.loadTimeline",
         input: {
           directory: projectDirectory,
           initialPlayheadUs: 350_000,
@@ -756,12 +858,9 @@ async function runSmoke(): Promise<void> {
       method: "POST",
       token: localApi.token,
       body: {
-        name: "preview.execute",
+        name: "preview.seek",
         input: {
-          command: {
-            type: "SeekPreview",
-            positionUs: 350_000
-          }
+          positionUs: 350_000
         }
       }
     });
@@ -778,37 +877,25 @@ async function runSmoke(): Promise<void> {
       throw new Error("Caption track was not generated.");
     }
 
-    const subtitleExport = await requestLocalApi<{
-      ok: boolean;
-      data: {
-        result: {
-          ok: boolean;
-          commandType: string;
-          artifact: { outputPath: string };
-        };
+    const subtitleExport = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        artifact: { outputPath: string };
       };
-    }>(localApi, "/api/v1/command", {
-      method: "POST",
-      token: localApi.token,
-      body: {
-        name: "captions.execute",
-        input: {
-          directory: projectDirectory,
-          command: {
-            type: "ExportSubtitleFile",
-            captionTrackId,
-            format: "srt"
-          }
-        }
-      }
+    }>("clawcut.export_subtitles", {
+      directory: projectDirectory,
+      captionTrackId,
+      format: "srt"
     });
 
     if (
-      !subtitleExport.body.ok ||
-      !subtitleExport.body.data.result.ok ||
-      subtitleExport.body.data.result.commandType !== "ExportSubtitleFile"
+      !subtitleExport.response.ok ||
+      !subtitleExport.response.data.result.ok ||
+      subtitleExport.response.data.result.commandType !== "ExportSubtitleFile"
     ) {
-      throw new Error("Could not export the subtitle sidecar through the local API.");
+      throw new Error("Could not export the subtitle sidecar through the OpenClaw plugin boundary.");
     }
 
     const burnInEnable = await requestLocalApi<{
@@ -818,15 +905,12 @@ async function runSmoke(): Promise<void> {
       method: "POST",
       token: localApi.token,
       body: {
-        name: "captions.execute",
+        name: "captions.setBurnIn",
         input: {
           directory: projectDirectory,
-          command: {
-            type: "EnableBurnInCaptionsForExport",
-            timelineId: timelineSessionViaApi.body.data.timeline.id,
-            captionTrackId,
-            enabled: true
-          }
+          timelineId: timelineSessionViaApi.body.data.timeline.id,
+          captionTrackId,
+          enabled: true
         }
       }
     });
@@ -839,122 +923,90 @@ async function runSmoke(): Promise<void> {
       throw new Error("Could not enable burn-in captions through the local API.");
     }
 
-    if (!existsSync(subtitleExport.body.data.result.artifact.outputPath)) {
+    if (!existsSync(subtitleExport.response.data.result.artifact.outputPath)) {
       throw new Error("Subtitle export did not create an output file.");
     }
 
-    if (!readFileSync(subtitleExport.body.data.result.artifact.outputPath, "utf8").includes("-->")) {
+    if (
+      !readFileSync(subtitleExport.response.data.result.artifact.outputPath, "utf8").includes("-->")
+    ) {
       throw new Error("Subtitle export did not produce a valid SRT payload.");
     }
 
     const videoRangeStartUs = 250_000;
     const videoRangeEndUs = 1_750_000;
-    const videoExportStart = await requestLocalApi<{
-      ok: boolean;
-      data: {
-        result: {
-          ok: boolean;
-          commandType: string;
-          exportRun: { id: string; jobId: string };
-        };
+    const videoExportStart = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        exportRun: { id: string; jobId: string };
       };
-    }>(localApi, "/api/v1/command", {
-      method: "POST",
-      token: localApi.token,
-      body: {
-        name: "export.execute",
-        input: {
-          directory: projectDirectory,
-          command: {
-            type: "StartExport",
-            request: {
-              timelineId: timelineSessionViaApi.body.data.timeline.id,
-              presetId: "video-share-720p",
-              target: {
-                kind: "range",
-                startUs: videoRangeStartUs,
-                endUs: videoRangeEndUs,
-                label: "Smoke range"
-              }
-            }
-          }
+    }>("clawcut.start_export", {
+      directory: projectDirectory,
+      request: {
+        timelineId: timelineSessionViaApi.body.data.timeline.id,
+        presetId: "video-share-720p",
+        target: {
+          kind: "range",
+          startUs: videoRangeStartUs,
+          endUs: videoRangeEndUs,
+          label: "Smoke range"
         }
       }
     });
 
     if (
-      !videoExportStart.body.ok ||
-      !videoExportStart.body.data.result.ok ||
-      videoExportStart.body.data.result.commandType !== "StartExport"
+      !videoExportStart.response.ok ||
+      !videoExportStart.response.data.result.ok ||
+      videoExportStart.response.data.result.commandType !== "StartExport"
     ) {
-      throw new Error("Could not start the video export through the local API.");
+      throw new Error("Could not start the video export through the OpenClaw plugin boundary.");
     }
 
-    const exportJobDetails = await requestLocalApi<{
-      ok: boolean;
-      data: {
-        job: { kind: string; status: string } | null;
-        exportRun: { id: string } | null;
-      };
-    }>(localApi, "/api/v1/query", {
-      method: "POST",
-      token: localApi.token,
-      body: {
-        name: "jobs.get",
-        input: {
-          directory: projectDirectory,
-          jobId: videoExportStart.body.data.result.exportRun.jobId
-        }
-      }
+    const exportJobDetails = await openClawClient.invokeTool<{
+      job: { kind: string; status: string } | null;
+      exportRun: { id: string } | null;
+    }>("clawcut.query_job", {
+      directory: projectDirectory,
+      jobId: videoExportStart.response.data.result.exportRun.jobId
     });
 
     if (
-      !exportJobDetails.body.ok ||
-      exportJobDetails.body.data.job?.kind !== "export" ||
-      !exportJobDetails.body.data.exportRun
+      !exportJobDetails.response.ok ||
+      exportJobDetails.response.data.job?.kind !== "export" ||
+      !exportJobDetails.response.data.exportRun
     ) {
-      throw new Error("The local API did not expose export job details.");
+      throw new Error("The OpenClaw plugin boundary did not expose export job details.");
     }
 
-    const audioExportStart = await requestLocalApi<{
-      ok: boolean;
-      data: {
-        result: {
-          ok: boolean;
-          commandType: string;
-          exportRun: { id: string; jobId: string };
-        };
+    const audioExportStart = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        exportRun: { id: string; jobId: string };
       };
-    }>(localApi, "/api/v1/command", {
-      method: "POST",
-      token: localApi.token,
-      body: {
-        name: "export.execute",
-        input: {
-          directory: projectDirectory,
-          command: {
-            type: "StartExport",
-            request: {
-              timelineId: timelineSessionViaApi.body.data.timeline.id,
-              presetId: "audio-podcast-aac"
-            }
-          }
-        }
+    }>("clawcut.start_export", {
+      directory: projectDirectory,
+      request: {
+        timelineId: timelineSessionViaApi.body.data.timeline.id,
+        presetId: "audio-podcast-aac"
       }
     });
 
     if (
-      !audioExportStart.body.ok ||
-      !audioExportStart.body.data.result.ok ||
-      audioExportStart.body.data.result.commandType !== "StartExport"
+      !audioExportStart.response.ok ||
+      !audioExportStart.response.data.result.ok ||
+      audioExportStart.response.data.result.commandType !== "StartExport"
     ) {
-      throw new Error("Could not start the audio export through the local API.");
+      throw new Error("Could not start the audio export through the OpenClaw plugin boundary.");
     }
 
     const completedVideo = await waitForExportToFinishViaApi(
       localApi,
       projectDirectory,
-      videoExportStart.body.data.result.exportRun.jobId
+      videoExportStart.response.data.result.exportRun.jobId
     );
 
     if (!completedVideo || completedVideo.status !== "completed" || !completedVideo.outputPath) {
@@ -1014,15 +1066,12 @@ async function runSmoke(): Promise<void> {
       method: "POST",
       token: localApi.token,
       body: {
-        name: "export.execute",
+        name: "export.captureSnapshot",
         input: {
           directory: projectDirectory,
-          command: {
-            type: "CaptureExportSnapshot",
-            request: {
-              sourceKind: "export-run",
-              exportRunId: completedVideo.id
-            }
+          request: {
+            sourceKind: "export-run",
+            exportRunId: completedVideo.id
           }
         }
       }
@@ -1039,7 +1088,7 @@ async function runSmoke(): Promise<void> {
     const completedAudio = await waitForExportToFinishViaApi(
       localApi,
       projectDirectory,
-      audioExportStart.body.data.result.exportRun.jobId
+      audioExportStart.response.data.result.exportRun.jobId
     );
 
     if (!completedAudio || completedAudio.status !== "completed" || !completedAudio.outputPath) {
@@ -1068,17 +1117,14 @@ async function runSmoke(): Promise<void> {
       method: "POST",
       token: localApi.token,
       body: {
-        name: "export.execute",
+        name: "export.captureSnapshot",
         input: {
           directory: projectDirectory,
-          command: {
-            type: "CaptureExportSnapshot",
-            request: {
-              sourceKind: "timeline",
-              timelineId: stageThreeResult.timeline.id,
-              positionUs: 600_000,
-              presetId: "video-share-720p"
-            }
+          request: {
+            sourceKind: "timeline",
+            timelineId: stageThreeResult.timeline.id,
+            positionUs: 600_000,
+            presetId: "video-share-720p"
           }
         }
       }

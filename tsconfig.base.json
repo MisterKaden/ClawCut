@@ -22,6 +22,12 @@
       "@clawcut/ipc": [
         "packages/ipc/src/index.ts"
       ],
+      "@clawcut/ipc/control-schema": [
+        "packages/ipc/src/control-schema.ts"
+      ],
+      "@clawcut/openclaw-plugin": [
+        "packages/openclaw-plugin/src/index.ts"
+      ],
       "@clawcut/media-worker": [
         "packages/media-worker/src/index.ts"
       ]

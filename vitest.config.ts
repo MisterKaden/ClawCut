@@ -9,10 +9,27 @@ export default defineConfig({
     }
   },
   resolve: {
-    alias: {
-      "@clawcut/domain": "/Users/winten/Developer/KPStudio/packages/domain/src/index.ts",
-      "@clawcut/ipc": "/Users/winten/Developer/KPStudio/packages/ipc/src/index.ts",
-      "@clawcut/media-worker": "/Users/winten/Developer/KPStudio/packages/media-worker/src/index.ts"
-    }
+    alias: [
+      {
+        find: "@clawcut/ipc/control-schema",
+        replacement: "/Users/winten/Developer/KPStudio/packages/ipc/src/control-schema.ts"
+      },
+      {
+        find: "@clawcut/domain",
+        replacement: "/Users/winten/Developer/KPStudio/packages/domain/src/index.ts"
+      },
+      {
+        find: "@clawcut/ipc",
+        replacement: "/Users/winten/Developer/KPStudio/packages/ipc/src/index.ts"
+      },
+      {
+        find: "@clawcut/openclaw-plugin",
+        replacement: "/Users/winten/Developer/KPStudio/packages/openclaw-plugin/src/index.ts"
+      },
+      {
+        find: "@clawcut/media-worker",
+        replacement: "/Users/winten/Developer/KPStudio/packages/media-worker/src/index.ts"
+      }
+    ]
   }
 });

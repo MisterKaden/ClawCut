@@ -48,9 +48,25 @@ That is the path that later lets both the human editor and OpenClaw drive the sa
 
 The renderer still never touches ffprobe, ffmpeg, SQLite, or project files directly.
 
-## Stage 7 local API
+## Stage 7 control layer
 
-Stage 7 adds a first-class local automation surface in the Electron main process.
+Stage 7 makes the shared command/query schema layer the primary automation contract and treats the local transport as a delivery mechanism.
+
+Main pieces:
+
+- shared schema registry in [control-schema.ts](/Users/winten/Developer/KPStudio/packages/ipc/src/control-schema.ts)
+- thin OpenClaw adapter package in [packages/openclaw-plugin](/Users/winten/Developer/KPStudio/packages/openclaw-plugin)
+- local authenticated HTTP transport in [local-api.ts](/Users/winten/Developer/KPStudio/apps/desktop/src/main/local-api.ts)
+
+The registry owns:
+
+- canonical operation names
+- input schema
+- output contract summaries
+- safety classes
+- mutability classes
+- sync vs job semantics
+- required scopes
 
 Transport:
 
@@ -63,10 +79,12 @@ Current routes:
 - `GET /api/v1/health`
 - `GET /api/v1/capabilities`
 - `GET /api/v1/openclaw/tools`
+- `GET /api/v1/openclaw/manifest`
+- `GET /api/v1/events`
 - `POST /api/v1/command`
 - `POST /api/v1/query`
 
-The local API does not bypass existing application services.
+The transport does not bypass existing application services.
 
 Request flow:
 
@@ -76,7 +94,9 @@ Request flow:
 4. command/query dispatch calls the existing worker session services or preview bridge
 5. response returns a structured envelope with `apiVersion`, `requestId`, `warnings`, and either `data` or a structured `error`
 
-This keeps OpenClaw and other local callers above the same trusted command/query layer that the desktop UI already depends on.
+For lightweight push updates, the same controller also exposes an authenticated SSE stream. It currently emits `ready`, `jobs.snapshot`, and `heartbeat` events so OpenClaw can observe job, export-run, and transcription-run state without relying only on polling.
+
+This keeps the desktop UI, local scripts, and OpenClaw above the same trusted command/query layer.
 
 ## Local API auth and safety
 
@@ -371,6 +391,13 @@ This is intentionally local for now because the active backend is renderer-nativ
 
 Stage 7 wraps that same preview control path behind the main-process local API by using a preview bridge instead of duplicating playback logic in HTTP handlers.
 
+Stage 7 also exposes two machine-readable preview inspection queries:
+
+- `preview.frame-snapshot`
+  - full structured snapshot including inline image data when available
+- `preview.frame-reference`
+  - lighter metadata-only reference for automation callers that only need timing, clip identity, source mode, dimensions, and error state
+
 ## Preview quality modes
 
 Stage 4 preview quality strategy:
@@ -588,30 +615,36 @@ This keeps the caption model and export hooks structured even when the local FFm
 
 ## OpenClaw integration boundary
 
-Stage 7 exposes tool discovery through the local API instead of hard-wiring OpenClaw into renderer components.
+Stage 7 exposes OpenClaw through a plugin-first adapter instead of hard-wiring automation into renderer components.
 
-`GET /api/v1/openclaw/tools` currently publishes machine-safe tool definitions for:
+The thin adapter package publishes machine-safe tool definitions for:
 
-- opening projects
-- importing media
-- querying timeline state
-- controlling preview seek/load
-- transcribing clips
-- generating captions
-- starting exports
-- querying jobs
+- projects
+- media
+- timeline editing
+- preview control and frame inspection
+- transcription and captions
+- export and job observation
+
+The local transport mirrors that same contract at:
+
+- `GET /api/v1/openclaw/tools`
+- `GET /api/v1/openclaw/manifest`
 
 Each tool definition includes:
 
 - stable tool name
 - description
-- mapped API command/query name
+- canonical operation name
+- safety class
+- mutability class
+- sync vs job semantics
 - required scopes
 - input schema summary
 - output expectations
 - safety notes
 
-This gives OpenClaw a deterministic discovery layer while keeping the actual business logic in the worker sessions and preview engine.
+This gives OpenClaw a deterministic discovery layer while keeping actual business logic in the worker sessions and preview engine.
 
 ## Preview composition rules
 
