@@ -56,6 +56,7 @@ Main pieces:
 
 - shared schema registry in [control-schema.ts](/Users/winten/Developer/KPStudio/packages/ipc/src/control-schema.ts)
 - thin OpenClaw adapter package in [packages/openclaw-plugin](/Users/winten/Developer/KPStudio/packages/openclaw-plugin)
+- packaged plugin manifest in [openclaw.plugin.json](/Users/winten/Developer/KPStudio/packages/openclaw-plugin/openclaw.plugin.json)
 - local authenticated HTTP transport in [local-api.ts](/Users/winten/Developer/KPStudio/apps/desktop/src/main/local-api.ts)
 
 The registry owns:
@@ -67,6 +68,12 @@ The registry owns:
 - mutability classes
 - sync vs job semantics
 - required scopes
+
+The adapter package owns:
+
+- manifest metadata and plugin config validation
+- default read-only tool exposure
+- explicit allowlists for mutating and high-impact tools
 
 Transport:
 

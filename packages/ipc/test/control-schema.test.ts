@@ -53,6 +53,8 @@ describe("control schema", () => {
     expect(manifest.tools.some((tool) => tool.name === "clawcut.open_project")).toBe(true);
     expect(manifest.tools.some((tool) => tool.name === "clawcut.capture_preview_frame")).toBe(true);
     expect(manifest.capabilityAvailability.openClawPlugin).toBe(true);
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.get_project_summary");
+    expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.open_project");
   });
 
   test("maps OpenClaw preview frame capture requests to the lighter frame reference by default", () => {
@@ -72,5 +74,15 @@ describe("control schema", () => {
 
     expect(highImpactTools.some((tool) => tool.name === "clawcut.import_media")).toBe(true);
     expect(highImpactTools.some((tool) => tool.name === "clawcut.start_export")).toBe(true);
+  });
+
+  test("only exposes read-only tools by default", () => {
+    const defaultEnabled = OPENCLAW_TOOL_DEFINITIONS.filter((tool) => tool.availableByDefault);
+
+    expect(defaultEnabled.every((tool) => tool.safetyClass === "read-only")).toBe(true);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.open_project")
+        ?.availableByDefault
+    ).toBe(false);
   });
 });

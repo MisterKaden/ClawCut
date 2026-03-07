@@ -292,6 +292,8 @@
   - Decision:
     - canonical operation metadata lives in `packages/ipc/src/control-schema.ts`
     - the OpenClaw adapter package consumes that registry directly
+    - the adapter is packaged with `openclaw.plugin.json` plus a schema-validated config surface
+    - only read-only tools are enabled by default; mutating and high-impact tools require explicit allowlisting
     - the local HTTP transport mirrors the same registry at `/api/v1/openclaw/tools` and `/api/v1/openclaw/manifest`
     - operations and tools explicitly declare safety class, mutability, and sync vs job behavior
   - Reason: OpenClaw should be able to discover what Clawcut can do without scraping docs or reverse-engineering UI affordances, and the local transport should not become the source of truth.

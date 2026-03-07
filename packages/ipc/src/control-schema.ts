@@ -1740,7 +1740,7 @@ const OPENCLAW_TOOL_RECORDS: OpenClawToolDefinitionRecord[] = [
     execution: "sync",
     returnsJob: false,
     longRunning: false,
-    availableByDefault: true,
+    availableByDefault: false,
     safetyNotes: ["Local filesystem access only.", "Project validation still runs inside ClawCut."],
     inputSchema: openProjectToolInputSchema,
     outputDescription: "Returns the refreshed project workspace snapshot."
@@ -2007,6 +2007,14 @@ export const OPENCLAW_TOOL_DEFINITIONS: OpenClawToolDefinition[] = OPENCLAW_TOOL
   (record) => record.definition
 );
 
+export function getDefaultOpenClawToolNames(): string[] {
+  return OPENCLAW_TOOL_DEFINITIONS.filter((tool) => tool.availableByDefault).map((tool) => tool.name);
+}
+
+export function getOptionalOpenClawToolNames(): string[] {
+  return OPENCLAW_TOOL_DEFINITIONS.filter((tool) => !tool.availableByDefault).map((tool) => tool.name);
+}
+
 export function resolveLocalApiCommandName(name: string): LocalApiCommandName | null {
   if (COMMAND_DEFINITION_MAP.has(name as LocalApiCommandName)) {
     return name as LocalApiCommandName;
@@ -2108,6 +2116,10 @@ export function createOpenClawToolManifest(capabilities: LocalApiCapabilities): 
     localOnly: true,
     auth: capabilities.auth,
     capabilityAvailability: capabilities.features,
+    toolExposure: {
+      defaultEnabled: getDefaultOpenClawToolNames(),
+      optionalAllowlist: getOptionalOpenClawToolNames()
+    },
     endpoints: {
       capabilities: capabilities.endpoints.capabilities,
       openClawTools: capabilities.endpoints.openClawTools,

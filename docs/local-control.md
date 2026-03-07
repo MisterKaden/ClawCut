@@ -24,6 +24,7 @@ The HTTP transport is useful, but it is not the product identity. The durable co
   - required scopes
 - OpenClaw adapter package:
   - [index.ts](/Users/winten/Developer/KPStudio/packages/openclaw-plugin/src/index.ts)
+  - [openclaw.plugin.json](/Users/winten/Developer/KPStudio/packages/openclaw-plugin/openclaw.plugin.json)
   - thin wrapper around the Clawcut transport
   - no editor/business-logic duplication
 - Local transport:
@@ -72,6 +73,8 @@ The OpenClaw-facing package is [packages/openclaw-plugin](/Users/winten/Develope
 It exports:
 
 - a static plugin descriptor
+- a validated plugin manifest file
+- a schema-validated plugin config parser
 - a generated tool manifest
 - a thin local HTTP client
 - tool-to-operation mapping helpers
@@ -87,6 +90,14 @@ Tool examples:
 - `clawcut.generate_captions`
 - `clawcut.start_export`
 - `clawcut.query_job`
+
+Default exposure policy in the plugin package:
+
+- read-only inspection tools are enabled by default
+- mutating tools require explicit allowlisting
+- high-impact tools require explicit allowlisting
+
+This policy is enforced by the adapter client itself, not only by documentation.
 
 The tool layer can collapse or refine transport operations when that improves automation ergonomics. Example: `clawcut.trim_clip` maps to either `timeline.trimClipStart` or `timeline.trimClipEnd` based on the requested edge.
 

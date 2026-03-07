@@ -2,7 +2,10 @@ import { describe, expect, test, vi } from "vitest";
 
 import {
   CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR,
+  CLAWCUT_OPENCLAW_PLUGIN_MANIFEST,
   ClawcutOpenClawClient,
+  getEnabledOpenClawTools,
+  parseClawcutOpenClawPluginConfig,
   createStaticOpenClawToolManifest
 } from "../src/index";
 
@@ -13,7 +16,14 @@ describe("openclaw plugin descriptor", () => {
     expect(manifest.protocolVersion).toBe("1");
     expect(manifest.tools.some((tool) => tool.name === "clawcut.start_export")).toBe(true);
     expect(manifest.tools.some((tool) => tool.name === "clawcut.capture_preview_frame")).toBe(true);
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.get_project_summary");
+    expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_export");
     expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.transport.kind).toBe("local-http");
+    expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.defaultEnabledTools).toContain(
+      "clawcut.capture_preview_frame"
+    );
+    expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.optionalTools).toContain("clawcut.start_export");
+    expect(CLAWCUT_OPENCLAW_PLUGIN_MANIFEST.defaultToolPolicy.highImpact).toBe("allowlist");
   });
 
   test("maps OpenClaw trim requests onto the canonical transport operations", async () => {
@@ -38,6 +48,7 @@ describe("openclaw plugin descriptor", () => {
     const client = new ClawcutOpenClawClient({
       baseUrl: "http://127.0.0.1:42170",
       token: "token",
+      enabledMutatingTools: ["clawcut.trim_clip"],
       fetchImpl: fetchImpl as unknown as typeof fetch
     });
 
@@ -54,5 +65,78 @@ describe("openclaw plugin descriptor", () => {
     const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
     expect(body.name).toBe("timeline.trimClipEnd");
     expect(body.input.newTimelineEndUs).toBe(750_000);
+  });
+
+  test("validates plugin config and exposes only read-only tools by default", () => {
+    const config = parseClawcutOpenClawPluginConfig({
+      baseUrl: "http://127.0.0.1:42170",
+      token: "token"
+    });
+
+    const enabledTools = getEnabledOpenClawTools(config);
+
+    expect(enabledTools.some((tool) => tool.name === "clawcut.get_project_summary")).toBe(true);
+    expect(enabledTools.some((tool) => tool.name === "clawcut.start_export")).toBe(false);
+  });
+
+  test("rejects allowlists that mix the wrong safety class", () => {
+    expect(() =>
+      parseClawcutOpenClawPluginConfig({
+        baseUrl: "http://127.0.0.1:42170",
+        token: "token",
+        enabledMutatingTools: ["clawcut.start_export"]
+      })
+    ).toThrow(/high-impact/u);
+  });
+
+  test("blocks non-allowlisted mutating tools by default and permits them when enabled", async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      void init;
+      return {
+        async json() {
+          return {
+            ok: true,
+            apiVersion: "v1",
+            requestId: "req-2",
+            name: "captions.generateTrack",
+            warnings: [],
+            data: {
+              ok: true
+            }
+          };
+        }
+      } as Response;
+    });
+
+    const defaultClient = new ClawcutOpenClawClient({
+      baseUrl: "http://127.0.0.1:42170",
+      token: "token",
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+
+    await expect(
+      defaultClient.invokeTool("clawcut.generate_captions", {
+        directory: "/tmp/project",
+        timelineId: "timeline-1",
+        transcriptId: "transcript-1",
+        templateId: "bottom-center-clean"
+      })
+    ).rejects.toThrow(/not enabled/u);
+
+    const allowlistedClient = new ClawcutOpenClawClient({
+      baseUrl: "http://127.0.0.1:42170",
+      token: "token",
+      enabledMutatingTools: ["clawcut.generate_captions"],
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+
+    await allowlistedClient.invokeTool("clawcut.generate_captions", {
+      directory: "/tmp/project",
+      timelineId: "timeline-1",
+      transcriptId: "transcript-1",
+      templateId: "bottom-center-clean"
+    });
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

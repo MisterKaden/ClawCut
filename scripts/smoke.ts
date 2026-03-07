@@ -305,7 +305,13 @@ async function runSmoke(): Promise<void> {
     const localApi = await waitForLocalApiReady(page);
     const openClawClient = new ClawcutOpenClawClient({
       baseUrl: localApi.baseUrl,
-      token: localApi.token
+      token: localApi.token,
+      enabledMutatingTools: ["clawcut.generate_captions"],
+      enabledHighImpactTools: [
+        "clawcut.transcribe_clip",
+        "clawcut.export_subtitles",
+        "clawcut.start_export"
+      ]
     });
     const health = await requestLocalApi<{ ok: boolean; data: { status: string } }>(
       localApi,

@@ -17,6 +17,7 @@ OpenClaw should treat the HTTP surface as an implementation detail behind the sh
 The OpenClaw adapter package is:
 
 - [packages/openclaw-plugin](/Users/winten/Developer/KPStudio/packages/openclaw-plugin)
+- packaged with [openclaw.plugin.json](/Users/winten/Developer/KPStudio/packages/openclaw-plugin/openclaw.plugin.json)
 
 It is intentionally thin:
 
@@ -24,6 +25,16 @@ It is intentionally thin:
 - it authenticates against the local control transport
 - it maps tool invocations to canonical command/query requests
 - it does not implement editor, preview, caption, or export business logic itself
+
+The package now also owns a schema-validated config surface:
+
+- `baseUrl`
+- `token`
+- `enableReadOnlyTools`
+- `enabledMutatingTools`
+- `enabledHighImpactTools`
+
+Read-only tools are enabled by default. Mutating and high-impact tools are opt-in through explicit allowlists.
 
 ## Tool surface
 
@@ -67,6 +78,7 @@ Each tool carries:
 - required scopes
 - machine-readable input schema
 - result contract summary
+- `availableByDefault`
 
 ## Safety model
 
@@ -86,6 +98,15 @@ High-impact examples:
 
 This is intended for future allowlisting and policy controls. The current local transport already enforces auth scopes, and the same metadata is available to the tool manifest.
 
+Default exposure policy:
+
+- `read-only`
+  - enabled by default
+- `mutating`
+  - optional and allowlist-friendly by default
+- `high-impact`
+  - optional and allowlist-friendly by default
+
 ## Discovery
 
 Discovery paths:
@@ -100,6 +121,8 @@ The manifest includes:
 - protocol version
 - auth requirements
 - capability availability
+- default-enabled tools
+- optional allowlist-only tools
 - endpoint map
 - full tool list
 

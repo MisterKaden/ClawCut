@@ -613,6 +613,10 @@ export interface OpenClawToolManifest {
   localOnly: true;
   auth: LocalApiCapabilities["auth"];
   capabilityAvailability: LocalApiCapabilities["features"];
+  toolExposure: {
+    defaultEnabled: string[];
+    optionalAllowlist: string[];
+  };
   endpoints: Pick<
     LocalApiCapabilities["endpoints"],
     "capabilities" | "openClawTools" | "openClawManifest" | "command" | "query" | "events"
