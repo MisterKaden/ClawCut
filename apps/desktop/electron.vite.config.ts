@@ -17,6 +17,11 @@ export default defineConfig({
         exclude: ["@clawcut/domain", "@clawcut/ipc", "@clawcut/media-worker"]
       })
     ],
+    build: {
+      rollupOptions: {
+        external: ["@resvg/resvg-js", "@resvg/resvg-js-darwin-arm64"]
+      }
+    },
     resolve: {
       alias
     }

@@ -1,4 +1,9 @@
 import type { DerivedAssetType } from "./media";
+import type { SubtitleFormat } from "./captions";
+import type {
+  ExportMode,
+  ExportVerificationResult
+} from "./render";
 
 export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type JobType =
@@ -22,6 +27,7 @@ export interface JobError {
 export interface JobResult {
   summary?: string;
   outputPaths?: string[];
+  verification?: ExportVerificationResult | null;
 }
 
 export interface JobBase {
@@ -49,7 +55,23 @@ export interface DerivedAssetJob extends JobBase {
   presetKey: string;
 }
 
-export type Job = IngestJob | DerivedAssetJob;
+export interface ExportJob extends JobBase {
+  kind: "export";
+  exportRunId: string;
+  exportMode: ExportMode;
+  presetId: string;
+  outputPath: string | null;
+}
+
+export interface TranscriptionJob extends JobBase {
+  kind: "transcription";
+  transcriptionRunId: string;
+  transcriptId: string | null;
+  sourceClipId: string | null;
+  subtitleFormat: SubtitleFormat | null;
+}
+
+export type Job = IngestJob | DerivedAssetJob | ExportJob | TranscriptionJob;
 
 export type MediaJobStatus = JobState;
 export type MediaJobKind = "ingest" | DerivedAssetType;

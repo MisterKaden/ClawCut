@@ -6,12 +6,15 @@ Clawcut owns the edit model and the preview model.
 
 FFmpeg and ffprobe are execution backends. They remain outside the UI and outside the core editing semantics.
 
-After Stage 4 the application shape is:
+After Stage 7 the application shape is:
 
 - UI
+- local authenticated API
 - typed command gateways
 - pure domain engines
 - preview engine
+- render compiler
+- transcript and caption engine
 - project state, job system, and media worker
 
 That is the path that later lets both the human editor and OpenClaw drive the same system safely.
@@ -22,23 +25,78 @@ That is the path that later lets both the human editor and OpenClaw drive the sa
   - Electron shell
   - native dialogs
   - preload bridge
+  - local authenticated API gateway
   - renderer UI
   - renderer-local `PreviewEngine`
 - `packages/ipc`
-  - typed request and snapshot contracts for project, ingest, and editor-session work
+  - typed request and snapshot contracts for project, ingest, editor-session, export, and caption work
 - `packages/domain`
   - project schema
   - timeline entities
   - media and job types
   - pure timeline command engine
   - pure preview command, state, and composition models
+  - pure render compiler and export presets
+  - transcript, caption, subtitle, and template models
 - `packages/media-worker`
   - project persistence
   - editor session service
+  - export session service
+  - caption session service
   - ingest, derived assets, relink
   - ffprobe, ffmpeg, SQLite, cache IO
 
 The renderer still never touches ffprobe, ffmpeg, SQLite, or project files directly.
+
+## Stage 7 local API
+
+Stage 7 adds a first-class local automation surface in the Electron main process.
+
+Transport:
+
+- local HTTP server
+- default bind `127.0.0.1`
+- bearer-token auth for all control and discovery routes except health
+
+Current routes:
+
+- `GET /api/v1/health`
+- `GET /api/v1/capabilities`
+- `GET /api/v1/openclaw/tools`
+- `POST /api/v1/command`
+- `POST /api/v1/query`
+
+The local API does not bypass existing application services.
+
+Request flow:
+
+1. HTTP request reaches the main-process local API controller
+2. auth and request-schema validation runs at the boundary
+3. request maps to a typed command or typed query name
+4. command/query dispatch calls the existing worker session services or preview bridge
+5. response returns a structured envelope with `apiVersion`, `requestId`, `warnings`, and either `data` or a structured `error`
+
+This keeps OpenClaw and other local callers above the same trusted command/query layer that the desktop UI already depends on.
+
+## Local API auth and safety
+
+The Stage 7 control surface is local-by-default and authenticated-by-default.
+
+Current safety model:
+
+- bearer token required for all protected routes
+- local token stored in app-local config and surfaced in the UI for trusted setup
+- scope-gated operations:
+  - `read`
+  - `edit`
+  - `preview`
+  - `export`
+  - `transcript`
+  - `admin`
+- mutating actions still pass through the same timeline, export, ingest, and caption validators as the UI path
+- long-running operations return job-linked machine-readable state instead of blocking the request
+
+This is intentionally not a public internet API. It is a controlled localhost automation surface for OpenClaw and other trusted local tools.
 
 ## Project storage
 
@@ -51,25 +109,137 @@ Clawcut remains hybrid:
   - worker-owned operational state
   - job rows
   - derived-asset manifests
+  - export runs
+  - transcription runs
   - schema metadata
 - `.clawcut/cache/`
   - deterministic media derivatives
   - proxy, waveform, thumbnail, and future preview-cache assets
+- `.clawcut/exports/`
+  - per-export worker artifacts
+  - render plan JSON
+  - FFmpeg spec JSON
+  - development manifests with generated FFmpeg args in development-oriented runs
+  - concat lists
+  - snapshot manifests and still-frame captures
+  - FFmpeg logs and verification JSON
+- `exports/`
+  - final user-facing export outputs
 
 Undo and redo remain session-scoped. Preview session state is also session-scoped.
 
 ## Project document
 
-The canonical document is still `ProjectDocumentV3`.
+The canonical document is now `ProjectDocumentV5`.
 
-Stage 4 does not add new persisted preview objects yet. The persisted document still owns:
+Stage 6 keeps preview, export session, and active transcription session state out of the project document. The persisted document owns:
 
 - project identity and timestamps
 - stable settings
 - `library.items[]`
 - `timeline`
+- `transcripts.items[]`
+- `captions.tracks[]`
+- `captions.exportDefaults`
 
 Preview transport state is intentionally not written to disk on every scrub or playback tick.
+
+## Transcript and caption model
+
+Stage 6 keeps caption data out of the Stage 3 audio and video track model.
+
+The project document now stores:
+
+- `transcripts.items[]`
+  - editable transcript objects with source reference, provider metadata, language, warnings, segments, and word timing
+- `captions.tracks[]`
+  - timeline-associated caption tracks generated from transcripts
+- `captions.templates[]`
+  - the built-in template ids available for this project version
+- `captions.exportDefaults`
+  - default sidecar format plus the burn-in enabled flag and selected caption track
+
+Transcript segments stay editable without destroying timing records. Segment text edits mark both the segment and transcript as user-edited while preserving original word timing data as source metadata.
+
+Caption tracks are first-class objects with:
+
+- track identity
+- source transcript identity
+- segmentation strategy
+- template/style reference
+- export intent
+- ordered caption segments
+
+Stage 6 caption generation is intentionally explicit:
+
+- one caption segment per transcript segment
+- deterministic line reflow
+- word associations preserved when source word timing exists
+- karaoke/highlight templates keep word references for preview-time active word highlighting
+
+## Transcription architecture
+
+Transcription runs through a dedicated worker-owned caption session.
+
+Flow:
+
+1. UI or automation submits a typed caption command
+2. caption session resolves the clip and media item
+3. FFmpeg extracts a deterministic mono WAV for the requested clip span
+4. a replaceable transcription adapter runs
+5. engine output is normalized into app-owned transcript types
+6. transcript data persists into `clawcut.project.json`
+7. transcription run state persists into SQLite and artifact files
+
+The primary runtime adapter is Faster-Whisper, but the integration is replaceable. Tests and smoke use a deterministic fixture adapter so verification does not depend on live model downloads.
+
+Transcription options currently support:
+
+- explicit language or auto-detect
+- model hint
+- word timestamp preference
+- initial prompt
+- lightweight glossary terms for names, products, and custom vocabulary
+- light text normalization
+
+Glossary terms are merged into prompt guidance in the worker adapter so the transcription backend remains replaceable without changing the command surface.
+
+## Caption commands and API
+
+Stage 6 adds a separate command/query surface for transcript and caption workflows:
+
+- `executeCaptionCommand({ directory, command })`
+- `getCaptionSessionSnapshot({ directory })`
+
+Major commands:
+
+- `TranscribeClip`
+- `CreateTranscript`
+- `UpdateTranscriptSegment`
+- `GenerateCaptionTrack`
+- `RegenerateCaptionTrack`
+- `ApplyCaptionTemplate`
+- `UpdateCaptionSegment`
+- `ExportSubtitleFile`
+- `EnableBurnInCaptionsForExport`
+- `QueryTranscriptStatus`
+- `QueryCaptionTrackState`
+
+`getCaptionSessionSnapshot(...)` also returns `transcriptSummaries[]`, which gives OpenClaw a compact machine-readable view of transcript timing, word-timing coverage, and caption-track coverage without forcing it to parse the entire editor state first.
+
+This keeps transcript and caption behavior automation-ready for OpenClaw without burying business logic in React components.
+
+## Active-word highlighting foundation
+
+Stage 6 stores word timing and word linkage in the caption model and carries active-word metadata forward into preview overlays.
+
+Current structured hooks:
+
+- caption segments retain ordered word timing records
+- caption templates declare an `activeWordStyle`
+- caption overlays expose token timing, source-word linkage, and active-state resolution at the playhead
+
+Today that powers preview-time highlighting for karaoke-style captions. Later stages can reuse the same model for richer social and karaoke treatments without redesigning caption storage.
 
 ## Timeline model
 
@@ -199,6 +369,8 @@ Current query surface:
 
 This is intentionally local for now because the active backend is renderer-native. The command and state types are already isolated so a later main-process or OpenClaw bridge can wrap the same contract instead of rewriting preview logic.
 
+Stage 7 wraps that same preview control path behind the main-process local API by using a preview bridge instead of duplicating playback logic in HTTP handlers.
+
 ## Preview quality modes
 
 Stage 4 preview quality strategy:
@@ -258,6 +430,189 @@ Preview source choice is explicit and deterministic:
 
 This keeps proxy policy observable instead of implicit.
 
+## Render compiler architecture
+
+Stage 5 adds a worker-owned export path:
+
+1. UI submits a typed export command
+2. worker export session normalizes the request, export target, and preset
+3. pure render compiler slices the timeline into render spans
+4. pure FFmpeg-spec compiler converts spans into a staged segment render plan
+5. worker materializes scripts, temp manifests, segment outputs, concat lists, and logs
+6. worker verifies the final artifact and persists machine-readable export state
+
+The domain compiler owns:
+
+- preset validation
+- clip trim resolution
+- topmost visible video selection
+- mixed audio contribution selection
+- deterministic gap behavior
+- serializable render plans and FFmpeg execution specs
+
+The worker owns:
+
+- output path resolution
+- export queueing
+- FFmpeg process execution
+- progress parsing
+- cancellation and retry
+- final artifact verification
+
+## Stage 5 visual and audio rules
+
+Stage 5 export is intentionally conservative:
+
+- the highest ordered visible video track with an active clip wins for each render span
+- lower video tracks only show through during gaps on higher tracks
+- active clips on unmuted audio tracks are mixed together for each span
+- video gaps render black
+- audio gaps render silence
+
+Unsupported timeline features fail fast during compilation:
+
+- clip speed other than `1`
+- non-identity transforms
+- non-default opacity
+- future caption or effect objects that lack a Stage 5 render implementation
+
+## Export presets and source policy
+
+Built-in Stage 5 presets:
+
+- `video-master-1080p`
+- `video-share-720p`
+- `audio-podcast-aac`
+
+Exports always resolve original source media, not proxies. Proxies remain preview-only infrastructure.
+
+Supported export targets:
+
+- full timeline
+- explicit in/out range
+- timeline region when a region already exists in project state
+
+The render plan records the resolved range explicitly so range exports stay deterministic and debuggable.
+
+## Export outputs and artifacts
+
+Per-export artifacts are written under `.clawcut/exports/<exportRunId>/`:
+
+- `render-plan.json`
+- `ffmpeg-spec.json`
+- `development-manifest.json`
+- per-segment filter scripts
+- `segments.concat.txt`
+- `ffmpeg.log`
+- `ffmpeg-progress.log`
+- `verification.json`
+- `snapshots/snapshot-manifest.json`
+
+When burn-in captions are enabled, the export artifact directory also records:
+
+- `captions/burn-in.ass`
+- `captions/plates/*.png`
+- `captions/burn-in.ffmpeg-filter.txt`
+
+Final outputs go under `<project>/exports/` with deterministic incrementing names:
+
+- `<project-slug>-<preset-slug>-001.<ext>`
+
+Explicit output paths are supported through the command API. Default behavior never silently overwrites an existing file.
+
+## Export commands and API
+
+Stage 5 export control is worker-backed and machine-readable:
+
+- `CreateExportRequest`
+- `CompileRenderPlan`
+- `StartExport`
+- `CaptureExportSnapshot`
+- `CancelExport`
+- `RetryExport`
+- `QueryExportStatus`
+- `ListExports`
+
+Current query surface:
+
+- `window.clawcut.getExportSessionSnapshot({ directory })`
+- `window.clawcut.executeExportCommand({ directory, command })`
+
+This keeps export automation-ready for OpenClaw without adding a public local server yet.
+
+Snapshot capture is intentionally command-driven:
+
+- capture a representative still from a completed export output
+- capture a frame from a selected timeline position using Stage 5 source-selection rules
+- return a typed artifact record with source identity, position, output path, and placeholder-frame status
+
+## Export verification
+
+Successful export is not assumed blindly. Stage 5 verifies:
+
+- output file exists
+- output file size is non-zero
+- `ffprobe` can inspect the file
+- container and stream shape match the preset intent
+- duration is within a small tolerance of the compiled timeline range
+
+Verification failure is distinct from FFmpeg execution failure and remains visible in export state.
+
+## Stage 6 caption preview and export
+
+Preview and export now consume structured caption state instead of placeholder overlay arrays.
+
+Preview composition resolves active caption overlays from:
+
+- the active caption track list
+- built-in template metadata
+- the current preview playhead
+
+Preview surfaces currently support:
+
+- caption placement
+- text alignment
+- basic background box/card treatments
+- active-word highlighting in karaoke-style templates when word timing exists
+
+Export supports two subtitle paths:
+
+- sidecar export
+  - `SRT`
+  - `ASS`
+- burn-in export
+  - Clawcut always generates ASS subtitle artifacts for inspection and reuse
+  - on FFmpeg builds with subtitle/text filters unavailable, Clawcut rasterizes caption plates to PNG and overlays them in the final burn-in pass
+
+This keeps the caption model and export hooks structured even when the local FFmpeg build is lean.
+
+## OpenClaw integration boundary
+
+Stage 7 exposes tool discovery through the local API instead of hard-wiring OpenClaw into renderer components.
+
+`GET /api/v1/openclaw/tools` currently publishes machine-safe tool definitions for:
+
+- opening projects
+- importing media
+- querying timeline state
+- controlling preview seek/load
+- transcribing clips
+- generating captions
+- starting exports
+- querying jobs
+
+Each tool definition includes:
+
+- stable tool name
+- description
+- mapped API command/query name
+- required scopes
+- input schema summary
+- output expectations
+- safety notes
+
+This gives OpenClaw a deterministic discovery layer while keeping the actual business logic in the worker sessions and preview engine.
+
 ## Preview composition rules
 
 At a given playhead position:
@@ -301,12 +656,16 @@ Stage 2 systems remain intact under Stage 4:
 
 Timeline clips still reference imported media items by `mediaItemId`. Preview composes from that media library state instead of inventing a separate source graph.
 
-## Known Stage 4 limitations
+## Known Stage 7 limitations
 
-- preview state is not yet bridged through the Electron main process
+- the local API is intentionally localhost-only and not designed for remote access
+- the preview bridge depends on an active desktop window and current renderer preview backend
+- the token/scope model is practical and local, not multi-user or cloud-oriented
 - same-track overwrite editing is still out of scope
 - live multi-track audio mixing is not implemented
 - selected-range accurate preview cache is a hook only
 - frame stepping uses clip frame rate when available, otherwise a sane default
-- viewer overlays are structured, but caption placeholder authoring is still a later stage
-- final export compilation remains a Stage 5 concern
+- transcript editing is limited to segment text edits
+- caption grouping is still one caption per transcript segment
+- burn-in fallback currently rasterizes whole caption segments, not per-word animated highlight timing
+- WebVTT and richer caption authoring tools remain later-stage work

@@ -1,3 +1,4 @@
+export * from "./captions";
 export * from "./editor";
 export * from "./jobs";
 export * from "./migrations";
@@ -6,5 +7,6 @@ export * from "./preview";
 export * from "./preview-composition";
 export * from "./project";
 export * from "./render";
+export * from "./render-compiler";
 export * from "./timeline";
 export * from "./timeline-engine";

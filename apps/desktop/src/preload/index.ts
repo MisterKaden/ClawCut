@@ -4,10 +4,15 @@ import {
   IPC_CHANNELS,
   type ClawcutApi,
   type CreateProjectInput,
+  type ExecuteCaptionCommandInput,
+  type ExecuteExportCommandInput,
   type ExecuteEditorCommandInput,
+  type GetCaptionSessionSnapshotInput,
+  type GetExportSessionSnapshotInput,
   type GetEditorSessionSnapshotInput,
   type GetProjectSnapshotInput,
   type ImportMediaPathsInput,
+  type SetLocalApiEnabledInput,
   type OpenProjectInput,
   type PickImportPathsInput,
   type ProbeAssetInput,
@@ -35,6 +40,18 @@ const clawcutApi: ClawcutApi = {
   executeEditorCommand(input: ExecuteEditorCommandInput) {
     return electron.ipcRenderer.invoke(IPC_CHANNELS.executeEditorCommand, input);
   },
+  getExportSessionSnapshot(input: GetExportSessionSnapshotInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.getExportSessionSnapshot, input);
+  },
+  executeExportCommand(input: ExecuteExportCommandInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.executeExportCommand, input);
+  },
+  getCaptionSessionSnapshot(input: GetCaptionSessionSnapshotInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.getCaptionSessionSnapshot, input);
+  },
+  executeCaptionCommand(input: ExecuteCaptionCommandInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.executeCaptionCommand, input);
+  },
   pickImportPaths(input?: PickImportPathsInput) {
     return electron.ipcRenderer.invoke(IPC_CHANNELS.pickImportPaths, input);
   },
@@ -52,6 +69,15 @@ const clawcutApi: ClawcutApi = {
   },
   probeAsset(input: ProbeAssetInput) {
     return electron.ipcRenderer.invoke(IPC_CHANNELS.probeAsset, input);
+  },
+  getLocalApiStatus() {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.getLocalApiStatus);
+  },
+  setLocalApiEnabled(input: SetLocalApiEnabledInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.setLocalApiEnabled, input);
+  },
+  regenerateLocalApiToken() {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.regenerateLocalApiToken);
   }
 };
 

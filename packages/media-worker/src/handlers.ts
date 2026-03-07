@@ -1,7 +1,11 @@
 import type {
   CreateProjectInput,
+  ExecuteCaptionCommandInput,
+  ExecuteExportCommandInput,
   ExecuteEditorCommandInput,
+  GetExportSessionSnapshotInput,
   GetEditorSessionSnapshotInput,
+  GetCaptionSessionSnapshotInput,
   GetProjectSnapshotInput,
   ImportMediaPathsInput,
   OpenProjectInput,
@@ -12,9 +16,17 @@ import type {
 } from "@clawcut/ipc";
 
 import {
+  executeCaptionCommand,
+  getCaptionSessionSnapshot
+} from "./caption-session";
+import {
   executeEditorCommand,
   getEditorSessionSnapshot
 } from "./editor-session";
+import {
+  executeExportCommand,
+  getExportSessionSnapshot
+} from "./export-session";
 import {
   importMediaPaths,
   primeProjectJobs,
@@ -56,6 +68,26 @@ export async function handleGetEditorSessionSnapshot(
 
 export async function handleExecuteEditorCommand(input: ExecuteEditorCommandInput) {
   return executeEditorCommand(input);
+}
+
+export async function handleGetExportSessionSnapshot(
+  input: GetExportSessionSnapshotInput
+) {
+  return getExportSessionSnapshot(input);
+}
+
+export async function handleExecuteExportCommand(input: ExecuteExportCommandInput) {
+  return executeExportCommand(input);
+}
+
+export async function handleGetCaptionSessionSnapshot(
+  input: GetCaptionSessionSnapshotInput
+) {
+  return getCaptionSessionSnapshot(input);
+}
+
+export async function handleExecuteCaptionCommand(input: ExecuteCaptionCommandInput) {
+  return executeCaptionCommand(input);
 }
 
 export async function handleImportMediaPaths(input: ImportMediaPathsInput) {

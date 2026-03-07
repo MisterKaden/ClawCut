@@ -66,6 +66,7 @@ export function PreviewPanel() {
   const hasAudio = previewState.loadedMedia.audio !== null;
   const activeMarkers = previewState.overlays.markers.filter((marker) => marker.active);
   const activeRegions = previewState.overlays.regions.filter((region) => region.active);
+  const activeCaptions = previewState.overlays.captions;
 
   return (
     <section className="preview-panel" data-testid="preview-panel">
@@ -146,6 +147,32 @@ export function PreviewPanel() {
               ))}
             </div>
           ) : null}
+
+          {activeCaptions.map((caption) => (
+            <div
+              className={`preview-caption preview-caption--${caption.placement}`}
+              data-active-word-style={caption.activeWordStyle}
+              data-testid="preview-caption-overlay"
+              key={caption.id}
+            >
+              <div
+                className={`preview-caption__body preview-caption__body--${caption.backgroundStyle} preview-caption__body--${caption.alignment}`}
+              >
+                {caption.tokens.length > 0 ? (
+                  caption.tokens.map((token) => (
+                    <span
+                      className={token.active ? "preview-caption__token preview-caption__token--active" : "preview-caption__token"}
+                      key={token.id}
+                    >
+                      {token.text}
+                    </span>
+                  ))
+                ) : (
+                  caption.text
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

@@ -9,10 +9,25 @@ import {
   type MediaItem,
   type MediaSourceType
 } from "./media";
+import {
+  CAPTION_TEMPLATE_IDS,
+  createDefaultCaptionExportDefaults,
+  captionCollectionSchema,
+  createEmptyCaptionCollection,
+  createEmptyTranscriptCollection,
+  transcriptCollectionSchema,
+  type CaptionExportDefaults,
+  type CaptionTrack,
+  type CaptionCollection,
+  type CaptionTemplateId,
+  type Transcript,
+  type TranscriptCollection
+} from "./captions";
 import { PROJECT_PREVIEW_DEFAULT_MODES, type ProjectPreviewDefaultMode } from "./preview";
+import { DEFAULT_EXPORT_PRESET_ID, EXPORT_PRESET_IDS, type ExportPresetId } from "./render";
 import { createEmptyTimeline, timelineSchema, type Timeline } from "./timeline";
 
-export const PROJECT_SCHEMA_VERSION = 3;
+export const PROJECT_SCHEMA_VERSION = 5;
 export const PROJECT_FILE_NAME = "clawcut.project.json";
 export const PROJECT_CACHE_DIRECTORY = ".clawcut";
 export const PROJECT_DATABASE_NAME = "project.db";
@@ -62,7 +77,7 @@ export interface ProjectSettingsV1 {
   };
 }
 
-export interface ProjectSettingsV2 {
+export interface ProjectSettingsLegacy {
   ingest: {
     proxyPreset: "stage2-standard-proxy";
   };
@@ -74,6 +89,21 @@ export interface ProjectSettingsV2 {
   };
   exports: {
     defaultPreset: "social-1080p";
+  };
+}
+
+export interface ProjectSettingsV2 {
+  ingest: {
+    proxyPreset: "stage2-standard-proxy";
+  };
+  preview: {
+    defaultMode: ProjectPreviewDefaultMode;
+  };
+  captions: {
+    defaultTemplate: CaptionTemplateId;
+  };
+  exports: {
+    defaultPreset: ExportPresetId;
   };
 }
 
@@ -92,20 +122,52 @@ export interface ProjectDocumentV1 {
 export interface ProjectDocumentV2 {
   schemaVersion: 2;
   project: ProjectIdentity;
-  settings: ProjectSettingsV2;
+  settings: ProjectSettingsLegacy;
   library: ProjectLibraryV2;
   timeline: TimelineRootV1;
 }
 
-export interface ProjectDocumentV3 {
+export interface ProjectDocumentLegacyV3 {
   schemaVersion: 3;
+  project: ProjectIdentity;
+  settings: ProjectSettingsLegacy;
+  library: ProjectLibraryV2;
+  timeline: Timeline;
+}
+
+export interface ProjectDocumentV4 {
+  schemaVersion: 4;
   project: ProjectIdentity;
   settings: ProjectSettingsV2;
   library: ProjectLibraryV2;
   timeline: Timeline;
 }
 
-export type ProjectDocument = ProjectDocumentV3;
+export interface ProjectDocumentLegacyV4 {
+  schemaVersion: 4;
+  project: ProjectIdentity;
+  settings: Omit<ProjectSettingsV2, "captions"> & {
+    captions: {
+      defaultTemplate: "bottom-clean" | CaptionTemplateId;
+    };
+  };
+  library: ProjectLibraryV2;
+  timeline: Timeline;
+}
+
+export interface ProjectDocumentV5 {
+  schemaVersion: typeof PROJECT_SCHEMA_VERSION;
+  project: ProjectIdentity;
+  settings: ProjectSettingsV2;
+  library: ProjectLibraryV2;
+  timeline: Timeline;
+  transcripts: TranscriptCollection;
+  captions: CaptionCollection;
+}
+
+export type ProjectDocumentV3 = ProjectDocumentV5;
+export type ProjectDocumentV4Legacy = ProjectDocumentV4;
+export type ProjectDocument = ProjectDocumentV5;
 
 const projectMediaReferenceSchema = z.object({
   id: z.string().min(1),
@@ -142,7 +204,7 @@ const settingsSchemaV1 = z.object({
   })
 });
 
-const settingsSchemaV2 = z.object({
+const settingsSchemaLegacy = z.object({
   ingest: z.object({
     proxyPreset: z.literal("stage2-standard-proxy")
   }),
@@ -154,6 +216,36 @@ const settingsSchemaV2 = z.object({
   }),
   exports: z.object({
     defaultPreset: z.literal("social-1080p")
+  })
+});
+
+const settingsSchemaV2 = z.object({
+  ingest: z.object({
+    proxyPreset: z.literal("stage2-standard-proxy")
+  }),
+  preview: z.object({
+    defaultMode: z.enum(PROJECT_PREVIEW_DEFAULT_MODES)
+  }),
+  captions: z.object({
+    defaultTemplate: z.enum(CAPTION_TEMPLATE_IDS)
+  }),
+  exports: z.object({
+    defaultPreset: z.enum(EXPORT_PRESET_IDS)
+  })
+});
+
+const settingsSchemaV2Migrating = z.object({
+  ingest: z.object({
+    proxyPreset: z.literal("stage2-standard-proxy")
+  }),
+  preview: z.object({
+    defaultMode: z.enum(PROJECT_PREVIEW_DEFAULT_MODES)
+  }),
+  captions: z.object({
+    defaultTemplate: z.union([z.literal("bottom-clean"), z.enum(CAPTION_TEMPLATE_IDS)])
+  }),
+  exports: z.object({
+    defaultPreset: z.enum(EXPORT_PRESET_IDS)
   })
 });
 
@@ -175,7 +267,7 @@ const projectDocumentSchemaV1 = z.object({
 const projectDocumentSchemaV2 = z.object({
   schemaVersion: z.literal(2),
   project: identitySchema,
-  settings: settingsSchemaV2,
+  settings: settingsSchemaLegacy,
   library: librarySchema,
   timeline: z.object({
     id: z.string().min(1),
@@ -183,12 +275,30 @@ const projectDocumentSchemaV2 = z.object({
   })
 });
 
-const projectDocumentSchemaV3 = z.object({
+const projectDocumentSchemaV3Legacy = z.object({
+  schemaVersion: z.literal(3),
+  project: identitySchema,
+  settings: settingsSchemaLegacy,
+  library: librarySchema,
+  timeline: timelineSchema
+});
+
+const projectDocumentSchemaV4 = z.object({
+  schemaVersion: z.literal(4),
+  project: identitySchema,
+  settings: settingsSchemaV2Migrating,
+  library: librarySchema,
+  timeline: timelineSchema
+});
+
+const projectDocumentSchemaV5 = z.object({
   schemaVersion: z.literal(PROJECT_SCHEMA_VERSION),
   project: identitySchema,
   settings: settingsSchemaV2,
   library: librarySchema,
-  timeline: timelineSchema
+  timeline: timelineSchema,
+  transcripts: transcriptCollectionSchema,
+  captions: captionCollectionSchema
 });
 
 function nowIso(): string {
@@ -207,6 +317,26 @@ function createLegacyFingerprint(): MediaFingerprint {
     modifiedTimeMs: null,
     sampleSizeBytes: 0
   };
+}
+
+function migrateLegacyExportPreset(
+  presetId: "social-1080p" | ExportPresetId | undefined
+): ExportPresetId {
+  if (!presetId || presetId === "social-1080p") {
+    return DEFAULT_EXPORT_PRESET_ID;
+  }
+
+  return presetId;
+}
+
+function migrateLegacyCaptionTemplate(
+  templateId: "bottom-clean" | CaptionTemplateId | undefined
+): CaptionTemplateId {
+  if (!templateId || templateId === "bottom-clean") {
+    return "bottom-center-clean";
+  }
+
+  return templateId;
 }
 
 export function createMediaItemFromLegacyReference(
@@ -239,7 +369,7 @@ export function createMediaItemFromLegacyReference(
   };
 }
 
-export function createEmptyProjectDocument(projectName: string): ProjectDocumentV3 {
+export function createEmptyProjectDocument(projectName: string): ProjectDocumentV5 {
   const timestamp = nowIso();
 
   return {
@@ -258,16 +388,18 @@ export function createEmptyProjectDocument(projectName: string): ProjectDocument
         defaultMode: "standard"
       },
       captions: {
-        defaultTemplate: "bottom-clean"
+        defaultTemplate: "bottom-center-clean"
       },
       exports: {
-        defaultPreset: "social-1080p"
+        defaultPreset: DEFAULT_EXPORT_PRESET_ID
       }
     },
     library: {
       items: []
     },
-    timeline: createEmptyTimeline()
+    timeline: createEmptyTimeline(),
+    transcripts: createEmptyTranscriptCollection(),
+    captions: createEmptyCaptionCollection()
   };
 }
 
@@ -300,19 +432,76 @@ export function migrateProjectDocumentV1(
 
 export function migrateProjectDocumentV2(
   legacyDocument: ProjectDocumentV2
-): ProjectDocumentV3 {
+): ProjectDocumentV5 {
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     project: legacyDocument.project,
-    settings: legacyDocument.settings,
+    settings: {
+      ...legacyDocument.settings,
+      captions: {
+        defaultTemplate: migrateLegacyCaptionTemplate(legacyDocument.settings.captions.defaultTemplate)
+      },
+      exports: {
+        defaultPreset: migrateLegacyExportPreset(legacyDocument.settings.exports.defaultPreset)
+      }
+    },
     library: legacyDocument.library,
-    timeline: createEmptyTimeline(legacyDocument.timeline.id)
+    timeline: createEmptyTimeline(legacyDocument.timeline.id),
+    transcripts: createEmptyTranscriptCollection(),
+    captions: createEmptyCaptionCollection()
   };
 }
 
-export function parseProjectDocument(input: unknown): ProjectDocumentV3 {
+export function migrateProjectDocumentV3(
+  legacyDocument: ProjectDocumentLegacyV3
+): ProjectDocumentV5 {
+  return {
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    project: legacyDocument.project,
+    settings: {
+      ...legacyDocument.settings,
+      captions: {
+        defaultTemplate: migrateLegacyCaptionTemplate(legacyDocument.settings.captions.defaultTemplate)
+      },
+      exports: {
+        defaultPreset: migrateLegacyExportPreset(legacyDocument.settings.exports.defaultPreset)
+      }
+    },
+    library: legacyDocument.library,
+    timeline: legacyDocument.timeline,
+    transcripts: createEmptyTranscriptCollection(),
+    captions: createEmptyCaptionCollection()
+  };
+}
+
+export function migrateProjectDocumentV4(
+  legacyDocument: ProjectDocumentLegacyV4
+): ProjectDocumentV5 {
+  return {
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    project: legacyDocument.project,
+    settings: {
+      ...legacyDocument.settings,
+      captions: {
+        defaultTemplate: migrateLegacyCaptionTemplate(legacyDocument.settings.captions.defaultTemplate)
+      }
+    },
+    library: legacyDocument.library,
+    timeline: legacyDocument.timeline,
+    transcripts: createEmptyTranscriptCollection(),
+    captions: createEmptyCaptionCollection()
+  };
+}
+
+export function parseProjectDocument(input: unknown): ProjectDocumentV5 {
   const parsedInput = z
-    .union([projectDocumentSchemaV1, projectDocumentSchemaV2, projectDocumentSchemaV3])
+    .union([
+      projectDocumentSchemaV1,
+      projectDocumentSchemaV2,
+      projectDocumentSchemaV3Legacy,
+      projectDocumentSchemaV4,
+      projectDocumentSchemaV5
+    ])
     .parse(input);
 
   if (parsedInput.schemaVersion === 1) {
@@ -323,14 +512,22 @@ export function parseProjectDocument(input: unknown): ProjectDocumentV3 {
     return migrateProjectDocumentV2(parsedInput);
   }
 
+  if (parsedInput.schemaVersion === 3) {
+    return migrateProjectDocumentV3(parsedInput);
+  }
+
+  if (parsedInput.schemaVersion === 4) {
+    return migrateProjectDocumentV4(parsedInput);
+  }
+
   return parsedInput;
 }
 
-export function serializeProjectDocument(project: ProjectDocumentV3): string {
+export function serializeProjectDocument(project: ProjectDocumentV5): string {
   return JSON.stringify(project, null, 2);
 }
 
-export function touchProjectDocument(project: ProjectDocumentV3): ProjectDocumentV3 {
+export function touchProjectDocument(project: ProjectDocumentV5): ProjectDocumentV5 {
   return {
     ...project,
     project: {
@@ -341,9 +538,9 @@ export function touchProjectDocument(project: ProjectDocumentV3): ProjectDocumen
 }
 
 export function upsertMediaItem(
-  project: ProjectDocumentV3,
+  project: ProjectDocumentV5,
   mediaItem: MediaItem
-): ProjectDocumentV3 {
+): ProjectDocumentV5 {
   const nextProject = touchProjectDocument(project);
   const withoutExisting = nextProject.library.items.filter((asset) => asset.id !== mediaItem.id);
 
@@ -356,11 +553,60 @@ export function upsertMediaItem(
 }
 
 export function replaceProjectTimeline(
-  project: ProjectDocumentV3,
+  project: ProjectDocumentV5,
   timeline: Timeline
-): ProjectDocumentV3 {
+): ProjectDocumentV5 {
   return touchProjectDocument({
     ...project,
     timeline
   });
+}
+
+export function upsertTranscript(
+  project: ProjectDocumentV5,
+  transcript: Transcript
+): ProjectDocumentV5 {
+  const nextProject = touchProjectDocument(project);
+  const items = nextProject.transcripts.items.filter((entry) => entry.id !== transcript.id);
+
+  return {
+    ...nextProject,
+    transcripts: {
+      items: [...items, transcript]
+    }
+  };
+}
+
+export function upsertCaptionTrack(
+  project: ProjectDocumentV5,
+  captionTrack: CaptionTrack
+): ProjectDocumentV5 {
+  const nextProject = touchProjectDocument(project);
+  const tracks = nextProject.captions.tracks.filter((entry) => entry.id !== captionTrack.id);
+
+  return {
+    ...nextProject,
+    captions: {
+      ...nextProject.captions,
+      tracks: [...tracks, captionTrack]
+    }
+  };
+}
+
+export function setCaptionExportDefaults(
+  project: ProjectDocumentV5,
+  exportDefaults: Partial<CaptionExportDefaults>
+): ProjectDocumentV5 {
+  const nextProject = touchProjectDocument(project);
+
+  return {
+    ...nextProject,
+    captions: {
+      ...nextProject.captions,
+      exportDefaults: {
+        ...(nextProject.captions.exportDefaults ?? createDefaultCaptionExportDefaults()),
+        ...exportDefaults
+      }
+    }
+  };
 }

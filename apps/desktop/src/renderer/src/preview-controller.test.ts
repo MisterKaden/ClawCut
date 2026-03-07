@@ -240,6 +240,8 @@ function createLoadTarget(overrides: { mediaItem?: MediaItem } = {}): PreviewLoa
     cacheRoot: "/project/.clawcut/cache",
     timeline,
     libraryItems: [overrides.mediaItem ?? createMediaItem("media-1")],
+    captionTracks: [],
+    captionTemplates: [],
     defaultQualityMode: "fast"
   };
 }

@@ -146,3 +146,168 @@
 
 - Editorial-industrial visual language with serif display type and mono instrumentation details.
   - Reason: the product should feel like a calm, deliberate editing tool rather than a generic dashboard or neon demo.
+
+## Render compiler shape
+
+- Stage 5 compiles timeline state into an app-owned render plan and then into typed FFmpeg execution specs.
+  - Decision:
+    - pure compiler lives in `packages/domain`
+    - worker execution materializes filter scripts, segment renders, concat lists, and verification artifacts
+    - UI only submits export commands and renders export state
+  - Reason: raw FFmpeg command strings should remain an execution detail, not the product architecture.
+
+## Export strategy
+
+- Stage 5 uses a staged segment-render plus concat pipeline.
+  - Decision:
+    - slice the timeline at clip boundaries
+    - render one temp segment per resolved span
+    - concat finished segments into the final output
+    - verify the output with file checks plus `ffprobe`
+  - Reason: it is easier to inspect and debug than one monolithic filter graph, while leaving room for later captions, effects, and smarter composition.
+
+## Export target policy
+
+- Stage 5 supports full-timeline export, explicit in/out ranges, and region-based export when regions already exist in timeline state.
+  - Reason: the timeline model already has enough structure to make bounded exports deterministic without introducing a second editing model.
+
+## Development export artifacts
+
+- Keep generated filter scripts, concat lists, FFmpeg specs, and a development manifest on disk during development-oriented runs.
+  - Reason: export debugging is much faster when the exact generated artifacts and FFmpeg argument lists are inspectable after a failed or surprising render.
+
+## Export source policy
+
+- Final exports always use original media sources, never Stage 2 proxies.
+  - Reason: proxies are preview infrastructure. Export correctness should not silently depend on reduced-fidelity derivatives.
+
+## Export gap behavior
+
+- Video gaps render black and audio gaps render silence.
+  - Reason: implicit gap behavior is hard to debug and impossible to automate safely.
+
+## Output naming
+
+- Default outputs go under `<project>/exports` using deterministic auto-increment naming.
+  - Decision:
+    - `<project-slug>-<preset-slug>-001.<ext>`
+    - increment instead of overwrite by default
+    - explicit overwrite requires an intentional command flag
+  - Reason: export should be safe by default and easy to inspect after the fact.
+
+## Export queue policy
+
+- Run one active export per project and queue additional requests.
+  - Reason: this keeps FFmpeg execution predictable, simplifies cancellation, and produces stable machine-readable job state for future OpenClaw orchestration.
+
+## Export snapshot foundation
+
+- Add a typed snapshot command for both completed exports and selected timeline positions.
+  - Decision:
+    - completed exports can yield representative stills from final output media
+    - timeline-position snapshots resolve through the same Stage 5 render rules and can fall back to a black placeholder frame when no visual clip is active
+  - Reason: OpenClaw will eventually need a machine-readable visual verification hook without screen-driving the desktop app.
+
+## Transcript and caption storage
+
+- Stage 6 stores transcripts and caption tracks as app-owned project-document roots instead of mixing them into the Stage 3 audio/video track model.
+  - Reason: caption workflows need to align to the timeline while remaining independently editable and exportable without destabilizing the core clip/track overlap rules.
+
+## Transcription backend
+
+- Wrap Faster-Whisper behind a worker-owned `TranscriptionAdapter`.
+  - Decision:
+    - runtime adapter targets Faster-Whisper
+    - test and smoke use a deterministic fixture adapter
+  - Reason: the product needs a real local transcription path, but CI and smoke cannot depend on live model downloads or machine-specific Python setups.
+
+## Transcription guidance input
+
+- Keep transcription guidance lightweight and request-scoped.
+  - Decision:
+    - `TranscriptionOptions` includes both `initialPrompt` and `glossaryTerms`
+    - the worker composes glossary terms into backend prompt guidance
+    - the command/API surface stays backend-agnostic
+  - Reason: users need a practical way to improve recognition of names and product vocabulary now, but the product should not hard-wire project semantics to one transcription engine's prompt format.
+
+## Caption active-word metadata
+
+- Preserve active-word behavior as typed model data instead of a renderer-only effect.
+  - Decision:
+    - caption segments keep word timing/linkage
+    - templates and segments expose an `activeWordStyle`
+    - preview overlays expose token timing and active-state resolution
+  - Reason: karaoke/social caption styles need a structured foundation that later preview and render work can reuse without redesigning the caption model.
+
+## Transcript summary surface
+
+- Add compact transcript summaries alongside the full transcript snapshot.
+  - Decision:
+    - `getCaptionSessionSnapshot(...)` returns `transcriptSummaries`
+    - `QueryTranscriptStatus` also returns a `summary`
+  - Reason: OpenClaw should be able to inspect transcript timing, coverage, and caption linkage programmatically without always walking the full transcript tree first.
+
+## Local API transport
+
+- Stage 7 introduces a local HTTP API in the Electron main process instead of exposing worker internals directly.
+  - Decision:
+    - bind to `127.0.0.1` by default
+    - keep the API above the existing worker command/query services and the preview bridge
+    - keep the UI as just another client of the same business logic
+  - Reason: OpenClaw needs a stable automation surface, but that surface should not bypass validation or project/session ownership rules already implemented in Clawcut.
+
+## Local API authentication and scopes
+
+- Require bearer-token authentication for all control and discovery endpoints except health.
+  - Decision:
+    - token stored in a local config file under the app data directory
+    - local-only bind by default
+    - scope model:
+      - `read`
+      - `edit`
+      - `preview`
+      - `export`
+      - `transcript`
+      - `admin`
+  - Reason: the API is intentionally local, but OpenClaw and other callers still need an explicit trust boundary and scope-aware rejection for mutating or sensitive actions.
+
+## Local API request envelope
+
+- Use a stable command/query envelope instead of route-per-action payloads.
+  - Decision:
+    - `POST /api/v1/command` with `{ name, input }`
+    - `POST /api/v1/query` with `{ name, input }`
+    - every response includes:
+      - `ok`
+      - `apiVersion`
+      - `requestId`
+      - `name`
+      - `warnings`
+      - `data` or structured `error`
+  - Reason: automation clients need one consistent machine-readable contract and a practical versioning stance before the control surface grows.
+
+## OpenClaw tool manifest
+
+- Publish an explicit OpenClaw tool-discovery layer from the same local API boundary.
+  - Decision:
+    - `GET /api/v1/openclaw/tools`
+    - tool entries declare name, description, required scopes, input schema summary, and output expectations
+  - Reason: OpenClaw should be able to discover what Clawcut can do without scraping docs or reverse-engineering UI affordances.
+
+## Caption generation strategy
+
+- Stage 6 groups captions one transcript segment at a time.
+  - Reason: deterministic segment-level grouping is easy to inspect, preserves timing fidelity, and gives later stages a stable base for smarter regrouping without forcing heuristics now.
+
+## Subtitle formats
+
+- Stage 6 supports `SRT` and `ASS`.
+  - Reason: `SRT` is the simplest broadly-compatible sidecar format, while `ASS` carries enough styling intent to serve as the structured burn-in asset.
+
+## Caption burn-in strategy
+
+- Generate ASS subtitle artifacts, but fall back to rasterized PNG caption plates for the final burn-in pass when FFmpeg subtitle/text filters are unavailable.
+  - Decision:
+    - `ASS` stays the canonical styled subtitle artifact
+    - burn-in pass can use per-segment overlay plates plus a generated FFmpeg filter script
+  - Reason: local FFmpeg builds vary widely. This keeps Stage 6 burn-in reliable without collapsing the architecture into UI-owned text rendering hacks.

@@ -16,6 +16,9 @@ describe("project schema", () => {
     expect(project.project.name).toBe("Clawcut Session");
     expect(project.timeline.trackOrder).toEqual([]);
     expect(project.library.items).toEqual([]);
+    expect(project.transcripts.items).toEqual([]);
+    expect(project.captions.tracks).toEqual([]);
+    expect(project.captions.exportDefaults.burnInEnabled).toBe(false);
   });
 
   test("migrates a valid document through the entrypoint", () => {

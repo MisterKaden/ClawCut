@@ -19,5 +19,5 @@ await build({
   target: "node22",
   format: "cjs",
   sourcemap: true,
-  external: ["better-sqlite3"]
+  external: ["better-sqlite3", "@resvg/resvg-js", "@resvg/resvg-js-darwin-arm64"]
 });

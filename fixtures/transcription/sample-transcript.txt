@@ -1,0 +1,2 @@
+Clawcut keeps transcripts editable, word timed, and ready for deterministic captions.
+The preview and export pipeline use the same project-owned caption data.

@@ -1,4 +1,9 @@
-import type { DerivedAssetType, MediaJobStatus } from "@clawcut/domain";
+import type {
+  DerivedAssetType,
+  ExportMode,
+  MediaJobStatus,
+  SubtitleFormat
+} from "@clawcut/domain";
 
 export interface PersistedIngestJobPayload {
   sourcePath: string;
@@ -10,13 +15,34 @@ export interface PersistedDerivedJobPayload {
   presetKey: string;
 }
 
-export type PersistedJobPayload = PersistedIngestJobPayload | PersistedDerivedJobPayload;
+export interface PersistedExportJobPayload {
+  exportRunId: string;
+  timelineId: string;
+  exportMode: ExportMode;
+  presetId: string;
+  outputPath: string | null;
+}
+
+export interface PersistedTranscriptionJobPayload {
+  transcriptionRunId: string;
+  transcriptId: string | null;
+  timelineId: string | null;
+  clipId: string | null;
+  mediaItemId: string | null;
+  subtitleFormat: SubtitleFormat | null;
+}
+
+export type PersistedJobPayload =
+  | PersistedIngestJobPayload
+  | PersistedDerivedJobPayload
+  | PersistedExportJobPayload
+  | PersistedTranscriptionJobPayload;
 
 export interface StoredJobRecord {
   id: string;
   projectDirectory: string;
   mediaItemId: string | null;
-  kind: "ingest" | DerivedAssetType;
+  kind: "ingest" | DerivedAssetType | "export" | "transcription";
   status: MediaJobStatus;
   progress: number;
   step: string;

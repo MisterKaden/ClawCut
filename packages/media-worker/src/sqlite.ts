@@ -45,8 +45,49 @@ function applyMigrations(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS export_runs (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      project_directory TEXT NOT NULL,
+      timeline_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      export_mode TEXT NOT NULL,
+      preset_id TEXT NOT NULL,
+      output_path TEXT,
+      artifact_directory TEXT,
+      request_json TEXT NOT NULL,
+      render_plan_json TEXT,
+      ffmpeg_spec_json TEXT,
+      verification_json TEXT,
+      diagnostics_json TEXT NOT NULL,
+      error_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      retry_of_run_id TEXT,
+      cancellation_requested INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS transcription_runs (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      transcript_id TEXT,
+      project_directory TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      raw_artifact_path TEXT,
+      diagnostics_json TEXT NOT NULL,
+      error_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      retry_of_run_id TEXT
+    );
+
     INSERT INTO schema_metadata (key, value)
-    VALUES ('schema_version', '2')
+    VALUES ('schema_version', '4')
     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
   `);
 }

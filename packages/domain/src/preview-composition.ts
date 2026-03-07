@@ -1,3 +1,4 @@
+import { resolveActiveCaptionOverlays } from "./captions";
 import type { MediaItem } from "./media";
 import {
   createDefaultPreviewOverlayModel,
@@ -283,11 +284,14 @@ function resolvePreviewSourceMode(
 }
 
 function buildOverlayModel(
-  timeline: Timeline,
+  target: PreviewLoadTarget,
   selection: PreviewSelectionState,
   playheadUs: number
 ): PreviewOverlayModel {
-  const overlayModel = createDefaultPreviewOverlayModel(timeline.markers, timeline.regions);
+  const overlayModel = createDefaultPreviewOverlayModel(
+    target.timeline.markers,
+    target.timeline.regions
+  );
 
   overlayModel.markers = overlayModel.markers.map((marker) => ({
     ...marker,
@@ -297,6 +301,11 @@ function buildOverlayModel(
     ...region,
     active: region.startUs <= playheadUs && playheadUs <= region.endUs
   }));
+  overlayModel.captions = resolveActiveCaptionOverlays(
+    target.captionTracks,
+    target.captionTemplates,
+    playheadUs
+  );
 
   if (selection.selectedClipId) {
     overlayModel.selection = {
@@ -375,7 +384,9 @@ export function createPreviewLoadSignature(target: PreviewLoadTarget): string {
             videoCodec: item.derivedAssets.proxy.videoCodec
           }
         : null
-    }))
+    })),
+    captionTracks: target.captionTracks,
+    captionTemplates: target.captionTemplates
   });
 }
 
@@ -452,7 +463,7 @@ export function resolveTimelinePreviewComposition(
     activeAudioClip,
     videoSource,
     audioSource,
-    overlays: buildOverlayModel(target.timeline, selection, clampedPlayheadUs),
+    overlays: buildOverlayModel(target, selection, clampedPlayheadUs),
     warning: warnings.length > 0 ? warnings.join(" ") : null
   };
 }

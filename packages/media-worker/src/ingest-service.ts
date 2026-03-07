@@ -42,9 +42,12 @@ import {
 import { generateProxyAsset } from "./proxy";
 import { evaluateRelinkCandidate } from "./relink";
 import { generateThumbnailAsset } from "./thumbnail";
+import { updateTranscriptionRunRecord } from "./transcription-repository";
+import { scheduleTranscriptionJob } from "./caption-session";
 import type {
   PersistedDerivedJobPayload,
-  PersistedIngestJobPayload
+  PersistedIngestJobPayload,
+  PersistedTranscriptionJobPayload
 } from "./job-payloads";
 import { nowIso, normalizeFileSystemPath, WorkerError } from "./utils";
 import { generateWaveformAsset } from "./waveform";
@@ -397,7 +400,12 @@ async function runDerivedJob(directory: string, jobId: string): Promise<void> {
   const paths = resolveProjectPaths(directory);
   const storedJob = getStoredJobRecord(paths.databasePath, jobId);
 
-  if (!storedJob || storedJob.kind === "ingest") {
+  if (
+    !storedJob ||
+    storedJob.kind === "ingest" ||
+    storedJob.kind === "export" ||
+    storedJob.kind === "transcription"
+  ) {
     return;
   }
 
@@ -521,6 +529,10 @@ async function processQueuedJob(directory: string, jobId: string): Promise<void>
     return;
   }
 
+  if (storedJob.kind === "export" || storedJob.kind === "transcription") {
+    return;
+  }
+
   await runDerivedJob(directory, jobId);
 }
 
@@ -612,6 +624,18 @@ export async function retryJob(
     step: "Queued",
     errorMessage: null
   });
+
+  if (storedJob.kind === "transcription") {
+    const payload = storedJob.payload as PersistedTranscriptionJobPayload;
+    updateTranscriptionRunRecord(paths.databasePath, payload.transcriptionRunId, {
+      status: "queued",
+      error: null,
+      completedAt: null,
+      startedAt: null
+    });
+    scheduleTranscriptionJob(input.directory);
+    return getProjectSnapshot(input.directory);
+  }
 
   scheduleJob(input.directory, input.jobId);
 

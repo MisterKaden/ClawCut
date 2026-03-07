@@ -60,23 +60,51 @@ Acceptance criteria:
 
 ## Stage 5: Render compiler
 
+Status: complete
+
 Acceptance criteria:
 
 - timeline IR compiles to deterministic FFmpeg job specs
 - export presets exist
+- bounded range or region export works through the same compiler path
 - progress, cancel, retry, and failure states are visible
+- representative still-frame snapshot capture exists for exports and timeline positions
 - fixture-based output verification uses ffprobe checks
 
 ## Stage 6: Captions
 
-Acceptance criteria:
+Status: complete
+
+Delivered:
 
 - Whisper jobs produce editable word-timed transcript JSON
 - glossary and initial-prompt input is supported
+- transcript summaries and caption-coverage snapshots are queryable for future OpenClaw automation
+- active-word highlighting metadata is preserved for karaoke/social caption styles
 - caption editing and reusable templates exist
 - sidecar subtitle and burned-in caption export both work
 
-## Stage 7: Hardening
+Current Stage 6 notes:
+
+- transcript editing is segment-level for now
+- caption grouping is one transcript segment at a time
+- burn-in export keeps ASS artifacts and uses rasterized overlay fallback when local FFmpeg subtitle filters are unavailable
+
+## Stage 7: Local API and OpenClaw foundations
+
+Status: complete
+
+Acceptance criteria:
+
+- local authenticated API exists
+- project, media, timeline, preview, export, transcript, caption, and job workflows are callable through typed command/query requests
+- request and response envelopes are structured and versioned
+- auth failures, validation failures, and scope failures are explicit
+- capability discovery and OpenClaw tool discovery exist
+- long-running actions return machine-readable job-linked state
+- UI surfaces the local API status and token
+
+## Stage 8: Hardening
 
 Acceptance criteria:
 
@@ -85,7 +113,7 @@ Acceptance criteria:
 - packaged builds exist
 - performance budgets and regression fixtures run in CI
 
-## Stage 8: Beast mode
+## Stage 9: Beast mode
 
 Acceptance criteria:
 

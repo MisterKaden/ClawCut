@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import {
+  getBuiltInCaptionTemplates,
   buildTimelineClipSequenceKey,
   clampPreviewPlayheadUs,
   type PreviewFrameSnapshot,
@@ -102,6 +103,8 @@ export function createPreviewLoadTarget(
     cacheRoot: snapshot.cacheRoot,
     timeline: snapshot.timeline,
     libraryItems: snapshot.libraryItems,
+    captionTracks: snapshot.document.captions.tracks,
+    captionTemplates: getBuiltInCaptionTemplates(),
     defaultQualityMode: projectPreviewModeToQualityMode(
       snapshot.document.settings.preview.defaultMode
     )

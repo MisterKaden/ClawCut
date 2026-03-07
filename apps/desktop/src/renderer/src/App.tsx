@@ -1,18 +1,29 @@
 import { startTransition, useEffect, useEffectEvent, useState } from "react";
 
 import type {
+  CaptionCommand,
   DerivedAsset,
   EditorCommand,
+  ExportPresetId,
   MediaItem,
   Job,
+  TranscriptionOptions,
   WaveformAsset
 } from "@clawcut/domain";
+import { getTimelineEndUs } from "@clawcut/domain";
 import type {
+  LocalApiStatus,
   EditorSessionSnapshot,
+  CaptionSessionSnapshot,
+  ExecuteCaptionCommandResult,
+  ExportSessionSnapshot,
   ExecuteEditorCommandResult,
+  ExecuteExportCommandResult,
   ToolchainStatus
 } from "@clawcut/ipc";
 
+import { CaptionPanel } from "./caption-panel";
+import { ExportPanel } from "./export-panel";
 import { createPreviewLoadTarget, previewController } from "./preview-controller";
 import { PreviewPanel } from "./preview-panel";
 import { TimelineEditor } from "./timeline-editor";
@@ -31,7 +42,9 @@ function hasActiveWork(snapshot: EditorSessionSnapshot | null): boolean {
     return false;
   }
 
-  return snapshot.jobs.some((job) => job.status === "queued" || job.status === "running");
+  return snapshot.jobs.some(
+    (job) => job.kind !== "export" && (job.status === "queued" || job.status === "running")
+  );
 }
 
 function formatDuration(durationMs: number | null): string {
@@ -243,7 +256,16 @@ export function App() {
   const [projectDirectory, setProjectDirectory] = useState("");
   const [projectName, setProjectName] = useState(defaultProjectName);
   const [toolchain, setToolchain] = useState<ToolchainStatus | null>(null);
+  const [localApiStatus, setLocalApiStatus] = useState<LocalApiStatus | null>(null);
   const [snapshot, setSnapshot] = useState<EditorSessionSnapshot | null>(null);
+  const [exportSnapshot, setExportSnapshot] = useState<ExportSessionSnapshot | null>(null);
+  const [captionSnapshot, setCaptionSnapshot] = useState<CaptionSessionSnapshot | null>(null);
+  const [selectedExportPresetId, setSelectedExportPresetId] = useState<ExportPresetId | null>(null);
+  const [selectedExportTargetKey, setSelectedExportTargetKey] = useState("timeline");
+  const [customRangeStartSeconds, setCustomRangeStartSeconds] = useState("0");
+  const [customRangeEndSeconds, setCustomRangeEndSeconds] = useState("0");
+  const [selectedBurnInCaptionTrackId, setSelectedBurnInCaptionTrackId] = useState<string | null>(null);
+  const [burnInCaptionsEnabled, setBurnInCaptionsEnabled] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -255,18 +277,28 @@ export function App() {
 
   const selectedItem =
     snapshot?.libraryItems.find((item) => item.id === selectedItemId) ?? snapshot?.libraryItems[0] ?? null;
+  const mediaJobs = snapshot?.jobs.filter((job) => job.kind !== "export") ?? [];
   const activeJobs =
-    snapshot?.jobs.filter((job) => job.status === "queued" || job.status === "running") ?? [];
+    mediaJobs.filter((job) => job.status === "queued" || job.status === "running");
   const failedJobs =
-    snapshot?.jobs.filter((job) => job.status === "failed" || job.status === "cancelled") ?? [];
+    mediaJobs.filter((job) => job.status === "failed" || job.status === "cancelled");
   const waveformAsset = getWaveformAsset(selectedItem);
 
   useEffect(() => {
     void refreshToolchain();
+    void refreshLocalApiStatus();
   }, []);
 
   useEffect(() => {
     if (!snapshot) {
+      setExportSnapshot(null);
+      setCaptionSnapshot(null);
+      setSelectedExportPresetId(null);
+      setSelectedExportTargetKey("timeline");
+      setCustomRangeStartSeconds("0");
+      setCustomRangeEndSeconds("0");
+      setSelectedBurnInCaptionTrackId(null);
+      setBurnInCaptionsEnabled(false);
       setSelectedItemId(null);
       setSelectedTrackId(null);
       setSelectedClipId(null);
@@ -279,6 +311,62 @@ export function App() {
 
     setSelectedItemId(snapshot.libraryItems[0]?.id ?? null);
   }, [selectedItemId, snapshot]);
+
+  useEffect(() => {
+    if (!exportSnapshot) {
+      return;
+    }
+
+    if (
+      selectedExportPresetId &&
+      exportSnapshot.presets.some((preset) => preset.id === selectedExportPresetId)
+    ) {
+      return;
+    }
+
+    setSelectedExportPresetId(exportSnapshot.defaultPresetId);
+  }, [exportSnapshot, selectedExportPresetId]);
+
+  useEffect(() => {
+    if (!captionSnapshot) {
+      return;
+    }
+
+    const defaultTrackId = captionSnapshot.captionTracks[0]?.id ?? null;
+
+    setSelectedBurnInCaptionTrackId(
+      snapshot?.document.captions.exportDefaults.burnInTrackId ??
+        defaultTrackId
+    );
+    setBurnInCaptionsEnabled(
+      snapshot?.document.captions.exportDefaults.burnInEnabled ?? false
+    );
+  }, [captionSnapshot, snapshot]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+
+    if (
+      selectedExportTargetKey.startsWith("region:") &&
+      !snapshot.timeline.regions.some((region) => `region:${region.id}` === selectedExportTargetKey)
+    ) {
+      setSelectedExportTargetKey("timeline");
+    }
+  }, [selectedExportTargetKey, snapshot]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+
+    const timelineEndSeconds = (getTimelineEndUs(snapshot.timeline) / 1_000_000).toFixed(2);
+
+    if (customRangeEndSeconds === "0") {
+      setCustomRangeEndSeconds(timelineEndSeconds);
+    }
+  }, [customRangeEndSeconds, snapshot]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -310,6 +398,22 @@ export function App() {
     }
   });
 
+  const refreshExportSnapshotSilently = useEffectEvent(async (directory: string) => {
+    try {
+      await loadExportSession(directory);
+    } catch {
+      // Keep the visible state stable during background polling.
+    }
+  });
+
+  const refreshCaptionSnapshotSilently = useEffectEvent(async (directory: string) => {
+    try {
+      await loadCaptionSession(directory);
+    } catch {
+      // Keep the visible state stable during background polling.
+    }
+  });
+
   useEffect(() => {
     if (!snapshot) {
       return;
@@ -324,6 +428,44 @@ export function App() {
     };
   }, [snapshot, refreshSnapshotSilently]);
 
+  useEffect(() => {
+    if (!exportSnapshot) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshExportSnapshotSilently(exportSnapshot.directory);
+    }, 1_250);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [exportSnapshot, refreshExportSnapshotSilently]);
+
+  useEffect(() => {
+    if (!captionSnapshot) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshCaptionSnapshotSilently(captionSnapshot.directory);
+    }, 1_250);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [captionSnapshot, refreshCaptionSnapshotSilently]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void refreshLocalApiStatus();
+    }, 2_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
   async function refreshToolchain(): Promise<void> {
     try {
       const nextToolchain = await window.clawcut.detectToolchain();
@@ -336,12 +478,39 @@ export function App() {
     }
   }
 
+  async function refreshLocalApiStatus(): Promise<void> {
+    try {
+      const nextStatus = await window.clawcut.getLocalApiStatus();
+      startTransition(() => {
+        setLocalApiStatus(nextStatus);
+      });
+    } catch {
+      // Keep the visible UI stable if the main-process local API controller is unavailable.
+    }
+  }
+
   async function loadEditorSession(directory: string): Promise<EditorSessionSnapshot> {
     const nextSnapshot = await window.clawcut.getEditorSessionSnapshot({ directory });
     startTransition(() => {
       setSnapshot(nextSnapshot);
     });
     return nextSnapshot;
+  }
+
+  async function loadExportSession(directory: string): Promise<ExportSessionSnapshot> {
+    const nextExportSnapshot = await window.clawcut.getExportSessionSnapshot({ directory });
+    startTransition(() => {
+      setExportSnapshot(nextExportSnapshot);
+    });
+    return nextExportSnapshot;
+  }
+
+  async function loadCaptionSession(directory: string): Promise<CaptionSessionSnapshot> {
+    const nextCaptionSnapshot = await window.clawcut.getCaptionSessionSnapshot({ directory });
+    startTransition(() => {
+      setCaptionSnapshot(nextCaptionSnapshot);
+    });
+    return nextCaptionSnapshot;
   }
 
   async function withOperation<T>(
@@ -382,7 +551,11 @@ export function App() {
     }
 
     setImportFeedback(null);
-    await loadEditorSession(result.directory);
+    await Promise.all([
+      loadEditorSession(result.directory),
+      loadExportSession(result.directory),
+      loadCaptionSession(result.directory)
+    ]);
   }
 
   async function handleOpenProject(): Promise<void> {
@@ -397,7 +570,11 @@ export function App() {
     }
 
     setImportFeedback(null);
-    await loadEditorSession(result.directory);
+    await Promise.all([
+      loadEditorSession(result.directory),
+      loadExportSession(result.directory),
+      loadCaptionSession(result.directory)
+    ]);
   }
 
   async function handleImportPaths(paths: string[]): Promise<void> {
@@ -421,7 +598,11 @@ export function App() {
         ? `Queued ${result.acceptedPaths.length} media item${result.acceptedPaths.length === 1 ? "" : "s"} for ingest.`
         : "No supported media files were accepted."
     );
-    await loadEditorSession(result.snapshot.directory);
+    await Promise.all([
+      loadEditorSession(result.snapshot.directory),
+      loadExportSession(result.snapshot.directory),
+      loadCaptionSession(result.snapshot.directory)
+    ]);
   }
 
   async function handleImportClick(): Promise<void> {
@@ -451,7 +632,11 @@ export function App() {
       return;
     }
 
-    await loadEditorSession(result.directory);
+    await Promise.all([
+      loadEditorSession(result.directory),
+      loadExportSession(result.directory),
+      loadCaptionSession(result.directory)
+    ]);
   }
 
   async function handleRetryJob(jobId: string): Promise<void> {
@@ -470,7 +655,11 @@ export function App() {
       return;
     }
 
-    await loadEditorSession(result.directory);
+    await Promise.all([
+      loadEditorSession(result.directory),
+      loadExportSession(result.directory),
+      loadCaptionSession(result.directory)
+    ]);
   }
 
   async function handleRelinkSelected(): Promise<void> {
@@ -502,7 +691,11 @@ export function App() {
 
     setImportFeedback(result.result.details.join(" "));
     setSelectedItemId(selectedItem.id);
-    await loadEditorSession(result.snapshot.directory);
+    await Promise.all([
+      loadEditorSession(result.snapshot.directory),
+      loadExportSession(result.snapshot.directory),
+      loadCaptionSession(result.snapshot.directory)
+    ]);
   }
 
   async function handleExecuteEditorCommand(
@@ -531,6 +724,229 @@ export function App() {
     return result;
   }
 
+  async function handleExecuteExportCommand(
+    command: Parameters<typeof window.clawcut.executeExportCommand>[0]["command"],
+    message: string
+  ): Promise<ExecuteExportCommandResult | null> {
+    if (!snapshot) {
+      return null;
+    }
+
+    const result = await withOperation(message, async () =>
+      window.clawcut.executeExportCommand({
+        directory: snapshot.directory,
+        command
+      })
+    );
+
+    if (!result) {
+      return null;
+    }
+
+    startTransition(() => {
+      setExportSnapshot(result.snapshot);
+    });
+
+    return result;
+  }
+
+  async function handleExecuteCaptionCommand(
+    command: CaptionCommand,
+    message: string
+  ): Promise<ExecuteCaptionCommandResult | null> {
+    if (!snapshot) {
+      return null;
+    }
+
+    const result = await withOperation(message, async () =>
+      window.clawcut.executeCaptionCommand({
+        directory: snapshot.directory,
+        command
+      })
+    );
+
+    if (!result) {
+      return null;
+    }
+
+    startTransition(() => {
+      setCaptionSnapshot(result.snapshot);
+    });
+    await loadEditorSession(snapshot.directory);
+
+    return result;
+  }
+
+  async function handleTranscribeClip(
+    options?: Partial<Pick<TranscriptionOptions, "initialPrompt" | "glossaryTerms">>
+  ): Promise<void> {
+    if (!snapshot) {
+      return;
+    }
+
+    const clipId =
+      selectedClipId ??
+      Object.values(snapshot.timeline.clipsById).find((clip) => clip.streamType === "video")?.id ??
+      Object.values(snapshot.timeline.clipsById)[0]?.id;
+
+    if (!clipId) {
+      setImportFeedback("Select or create a clip on the timeline before requesting transcription.");
+      return;
+    }
+
+    const result = await handleExecuteCaptionCommand(
+      {
+        type: "TranscribeClip",
+        timelineId: snapshot.timeline.id,
+        clipId,
+        options
+      },
+      "Queueing transcription…"
+    );
+
+    if (result?.result.ok && result.result.commandType === "TranscribeClip") {
+      setImportFeedback("Queued clip transcription.");
+    }
+  }
+
+  async function handleStartExport(): Promise<void> {
+    if (!snapshot || !selectedExportPresetId) {
+      return;
+    }
+
+    let target:
+      | {
+          kind: "timeline";
+        }
+      | {
+          kind: "range";
+          startUs: number;
+          endUs: number;
+          label?: string;
+        }
+      | {
+          kind: "region";
+          regionId: string;
+        } = {
+          kind: "timeline"
+        };
+
+    if (selectedExportTargetKey === "range") {
+      const startUs = Math.round(Number(customRangeStartSeconds) * 1_000_000);
+      const endUs = Math.round(Number(customRangeEndSeconds) * 1_000_000);
+
+      if (!Number.isFinite(startUs) || !Number.isFinite(endUs) || endUs <= startUs) {
+        setImportFeedback("Custom export range must have a valid in/out span.");
+        return;
+      }
+
+      target = {
+        kind: "range",
+        startUs,
+        endUs,
+        label: "Custom range"
+      };
+    } else if (selectedExportTargetKey.startsWith("region:")) {
+      target = {
+        kind: "region",
+        regionId: selectedExportTargetKey.replace(/^region:/u, "")
+      };
+    }
+
+    const result = await handleExecuteExportCommand(
+      {
+        type: "StartExport",
+        request: {
+          timelineId: snapshot.timeline.id,
+          presetId: selectedExportPresetId,
+          target
+        }
+      },
+      "Queueing export…"
+    );
+
+    if (!result) {
+      return;
+    }
+
+    setImportFeedback(
+      result.result.ok && result.result.commandType === "StartExport"
+        ? `Queued export for ${result.result.exportRun.presetId}.`
+        : importFeedback
+    );
+  }
+
+  async function handleCancelExport(exportRunId: string): Promise<void> {
+    await handleExecuteExportCommand(
+      {
+        type: "CancelExport",
+        exportRunId
+      },
+      "Cancelling export…"
+    );
+  }
+
+  async function handleSetLocalApiEnabled(enabled: boolean): Promise<void> {
+    const result = await withOperation(
+      enabled ? "Starting local API…" : "Stopping local API…",
+      async () => window.clawcut.setLocalApiEnabled({ enabled })
+    );
+
+    if (!result) {
+      return;
+    }
+
+    startTransition(() => {
+      setLocalApiStatus(result);
+    });
+  }
+
+  async function handleRegenerateLocalApiToken(): Promise<void> {
+    const result = await withOperation("Rotating local API token…", async () =>
+      window.clawcut.regenerateLocalApiToken()
+    );
+
+    if (!result) {
+      return;
+    }
+
+    startTransition(() => {
+      setLocalApiStatus(result);
+    });
+    setImportFeedback("Generated a new local API token for trusted automation clients.");
+  }
+
+  async function handleRetryExport(exportRunId: string): Promise<void> {
+    await handleExecuteExportCommand(
+      {
+        type: "RetryExport",
+        exportRunId
+      },
+      "Retrying export…"
+    );
+  }
+
+  async function handleEnableBurnIn(enabled: boolean, captionTrackId: string | null): Promise<void> {
+    if (!snapshot) {
+      return;
+    }
+
+    const result = await handleExecuteCaptionCommand(
+      {
+        type: "EnableBurnInCaptionsForExport",
+        timelineId: snapshot.timeline.id,
+        captionTrackId,
+        enabled
+      },
+      enabled ? "Updating burn-in caption defaults…" : "Disabling burn-in captions…"
+    );
+
+    if (result?.result.ok && result.result.commandType === "EnableBurnInCaptionsForExport") {
+      setBurnInCaptionsEnabled(result.result.exportDefaults.burnInEnabled);
+      setSelectedBurnInCaptionTrackId(result.result.exportDefaults.burnInTrackId);
+    }
+  }
+
   function handleDrop(event: React.DragEvent<HTMLElement>): void {
     event.preventDefault();
     const paths = extractDroppedPaths(event);
@@ -543,18 +959,18 @@ export function App() {
         <div className="hero__backdrop" />
         <div className="hero__masthead">
           <div>
-            <p className="eyebrow">Clawcut / Stage 4 preview engine</p>
-            <h1>Preview the timeline through a real engine, not a pile of UI timers.</h1>
+            <p className="eyebrow">Clawcut / Stage 7 local automation API</p>
+            <h1>Run Clawcut as a local, authenticated media engine for OpenClaw and trusted tools.</h1>
             <p className="lede">
-              Stage 4 keeps the Stage 3 command and timeline core intact, then adds
-              a dedicated PreviewEngine with transport controls, scrubbing, proxy-aware
-              source selection, and machine-readable preview state that OpenClaw can
-              control later.
+              Stage 7 keeps the command, preview, export, transcript, and caption foundations intact
+              while adding a local authenticated control surface, capability discovery, request
+              logging, and an OpenClaw-ready tool manifest that can drive the same trusted pathways
+              as the desktop UI.
             </p>
           </div>
 
           <div className="hero__tooling">
-            {(["ffmpeg", "ffprobe"] as const).map((toolName) => {
+            {(["ffmpeg", "ffprobe", "transcription"] as const).map((toolName) => {
               const tool = toolchain?.tools[toolName];
 
               return (
@@ -676,6 +1092,109 @@ export function App() {
             </div>
           </section>
         </div>
+
+        <section className="status-board local-api-panel" data-testid="local-api-panel">
+          <header className="panel-header">
+            <div>
+              <p className="eyebrow eyebrow--muted">Local API</p>
+              <h2>Authenticated control surface</h2>
+            </div>
+            <span
+              className={
+                localApiStatus?.state === "running"
+                  ? "tone-chip tone-chip--ok"
+                  : localApiStatus?.state === "starting"
+                    ? "tone-chip tone-chip--progress"
+                    : localApiStatus?.state === "error"
+                      ? "tone-chip tone-chip--danger"
+                      : "tone-chip"
+              }
+            >
+              {localApiStatus?.state ?? "Unavailable"}
+            </span>
+          </header>
+
+          <div className="status-board__grid">
+            <div>
+              <span className="meta-label">Base URL</span>
+              <strong data-testid="local-api-base-url">
+                {localApiStatus?.baseUrl ?? "Local API is currently stopped"}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-label">Bind</span>
+              <strong>{localApiStatus ? `${localApiStatus.bindAddress}:${localApiStatus.port ?? "n/a"}` : "Pending"}</strong>
+            </div>
+            <div>
+              <span className="meta-label">Auth scopes</span>
+              <strong>{localApiStatus?.scopes.join(", ") ?? "Pending"}</strong>
+            </div>
+            <div>
+              <span className="meta-label">OpenClaw tools</span>
+              <strong>{localApiStatus?.openClawTools.length ?? 0}</strong>
+            </div>
+          </div>
+
+          <label className="field local-api-panel__token">
+            <span>Bearer token</span>
+            <input
+              data-testid="local-api-token"
+              readOnly
+              type="text"
+              value={localApiStatus?.token ?? ""}
+            />
+          </label>
+
+          <div className="button-row button-row--tight">
+            <button
+              className="secondary-button"
+              onClick={() => void handleSetLocalApiEnabled(!(localApiStatus?.enabled ?? false))}
+              type="button"
+            >
+              {localApiStatus?.enabled ? "Disable API" : "Enable API"}
+            </button>
+            <button
+              className="ghost-button"
+              onClick={() => void handleRegenerateLocalApiToken()}
+              type="button"
+            >
+              Regenerate token
+            </button>
+          </div>
+
+          <p className="status-panel__hint">
+            Use the bearer token with the local HTTP endpoints for authenticated automation. The
+            OpenClaw tool manifest is served at
+            {" "}
+            <code>/api/v1/openclaw/tools</code>
+            {" "}
+            when the API is running.
+          </p>
+
+          {localApiStatus?.recentRequests.length ? (
+            <div className="local-api-panel__requests">
+              {localApiStatus.recentRequests.slice(0, 4).map((entry) => (
+                <div className="local-api-request" key={entry.requestId}>
+                  <div className="local-api-request__header">
+                    <strong>{entry.name}</strong>
+                    <span className={entry.status === "ok" ? "tone-chip tone-chip--ok" : "tone-chip tone-chip--danger"}>
+                      {entry.status}
+                    </span>
+                  </div>
+                  <p>
+                    {entry.operationType} · {entry.durationMs} ms · {entry.requestId}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {localApiStatus?.lastError ? (
+            <p className="status-panel__error">
+              {localApiStatus.lastError.code}: {localApiStatus.lastError.message}
+            </p>
+          ) : null}
+        </section>
       </section>
 
       <PreviewPanel />
@@ -947,6 +1466,102 @@ export function App() {
         snapshot={snapshot}
       />
 
+      <CaptionPanel
+        captionSnapshot={captionSnapshot}
+        onApplyCaptionTemplate={(captionTrackId, templateId) =>
+          void handleExecuteCaptionCommand(
+            {
+              type: "ApplyCaptionTemplate",
+              captionTrackId,
+              templateId
+            },
+            "Applying caption template…"
+          )
+        }
+        onExportSubtitle={(captionTrackId, format) =>
+          void handleExecuteCaptionCommand(
+            {
+              type: "ExportSubtitleFile",
+              captionTrackId,
+              format
+            },
+            `Exporting ${format.toUpperCase()} subtitles…`
+          )
+        }
+        onGenerateCaptionTrack={(transcriptId, templateId) =>
+          void handleExecuteCaptionCommand(
+            {
+              type: "GenerateCaptionTrack",
+              timelineId: snapshot?.timeline.id ?? "",
+              transcriptId,
+              templateId
+            },
+            "Generating caption track…"
+          )
+        }
+        onRegenerateCaptionTrack={(captionTrackId) =>
+          void handleExecuteCaptionCommand(
+            {
+              type: "RegenerateCaptionTrack",
+              captionTrackId
+            },
+            "Regenerating caption track…"
+          )
+        }
+        onTranscribeClip={(options) => void handleTranscribeClip(options)}
+        onUpdateCaptionSegment={(captionTrackId, segmentId, text) =>
+          void handleExecuteCaptionCommand(
+            {
+              type: "UpdateCaptionSegment",
+              captionTrackId,
+              segmentId,
+              text
+            },
+            "Updating caption segment…"
+          )
+        }
+        onUpdateTranscriptSegment={(transcriptId, segmentId, text) =>
+          void handleExecuteCaptionCommand(
+            {
+              type: "UpdateTranscriptSegment",
+              transcriptId,
+              segmentId,
+              text
+            },
+            "Updating transcript segment…"
+          )
+        }
+        selectedClipId={selectedClipId}
+        snapshot={snapshot}
+      />
+
+      <ExportPanel
+        burnInCaptionsEnabled={burnInCaptionsEnabled}
+        captionSnapshot={captionSnapshot}
+        customRangeEndSeconds={customRangeEndSeconds}
+        customRangeStartSeconds={customRangeStartSeconds}
+        exportSnapshot={exportSnapshot}
+        onChangeBurnInTrackId={(trackId) => {
+          setSelectedBurnInCaptionTrackId(trackId);
+          void handleEnableBurnIn(burnInCaptionsEnabled, trackId);
+        }}
+        onChangeCustomRangeEndSeconds={setCustomRangeEndSeconds}
+        onChangeCustomRangeStartSeconds={setCustomRangeStartSeconds}
+        onChangeBurnInEnabled={(enabled) => {
+          setBurnInCaptionsEnabled(enabled);
+          void handleEnableBurnIn(enabled, selectedBurnInCaptionTrackId);
+        }}
+        onCancelExport={(exportRunId) => void handleCancelExport(exportRunId)}
+        onSelectTargetKey={setSelectedExportTargetKey}
+        onRetryExport={(exportRunId) => void handleRetryExport(exportRunId)}
+        onSelectPreset={setSelectedExportPresetId}
+        onStartExport={() => void handleStartExport()}
+        selectedBurnInTrackId={selectedBurnInCaptionTrackId}
+        selectedTargetKey={selectedExportTargetKey}
+        selectedPresetId={selectedExportPresetId}
+        snapshot={snapshot}
+      />
+
       <section className="jobs-panel" data-testid="job-strip">
         <header className="panel-header">
           <div>
@@ -985,7 +1600,7 @@ export function App() {
           ) : (
             <div className="empty-panel empty-panel--jobs">
               <strong>No queued work.</strong>
-              <p>The local job runner will list ingest, thumbnail, waveform, proxy, and recovery work here.</p>
+              <p>The local job runner will list ingest, derived asset, transcription, and recovery work here.</p>
             </div>
           )}
         </div>

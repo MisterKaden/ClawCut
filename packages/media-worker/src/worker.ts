@@ -3,7 +3,11 @@ import type { WorkerRequest, WorkerResponse } from "./contracts";
 import {
   handleCreateProject,
   handleDetectToolchain,
+  handleExecuteCaptionCommand,
+  handleExecuteExportCommand,
   handleExecuteEditorCommand,
+  handleGetCaptionSessionSnapshot,
+  handleGetExportSessionSnapshot,
   handleGetEditorSessionSnapshot,
   handleGetProjectSnapshot,
   handleImportMediaPaths,
@@ -29,6 +33,14 @@ async function dispatchRequest(message: WorkerRequest): Promise<unknown> {
       return handleGetEditorSessionSnapshot(message.payload);
     case "executeEditorCommand":
       return handleExecuteEditorCommand(message.payload);
+    case "getExportSessionSnapshot":
+      return handleGetExportSessionSnapshot(message.payload);
+    case "executeExportCommand":
+      return handleExecuteExportCommand(message.payload);
+    case "getCaptionSessionSnapshot":
+      return handleGetCaptionSessionSnapshot(message.payload);
+    case "executeCaptionCommand":
+      return handleExecuteCaptionCommand(message.payload);
     case "pickImportPaths":
       throw new Error("pickImportPaths must be handled in the Electron main process.");
     case "importMediaPaths":

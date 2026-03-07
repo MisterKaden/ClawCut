@@ -11,7 +11,10 @@ import {
 } from "@clawcut/domain";
 
 import {
+  createJobRecord,
   createProject,
+  getStoredJobRecord,
+  updateJobRecord,
   openProject,
   updateDerivedAssetForMediaItem,
   updateMediaItem
@@ -92,5 +95,34 @@ describe("project repository", () => {
 
     expect(item?.derivedAssets.thumbnail?.status).toBe("ready");
     expect(item?.ingestStatus).toBe("deriving");
+  });
+
+  test("keeps the previous job progress when an invalid progress update is supplied", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "clawcut-job-progress-"));
+    const project = await createProject(directory, "Job Progress Project");
+    const jobId = createJobRecord(project.databasePath, {
+      kind: "export",
+      projectDirectory: directory,
+      mediaItemId: null,
+      payload: {
+        exportRunId: "export-run-1",
+        timelineId: "timeline-1",
+        exportMode: "video",
+        presetId: "video-share-720p",
+        outputPath: join(directory, "exports/out.mp4")
+      },
+      status: "running",
+      progress: 0.45,
+      step: "Rendering"
+    });
+
+    updateJobRecord(project.databasePath, jobId, {
+      progress: Number.NaN,
+      step: "Still rendering"
+    });
+
+    const updated = getStoredJobRecord(project.databasePath, jobId);
+    expect(updated?.progress).toBe(0.45);
+    expect(updated?.step).toBe("Still rendering");
   });
 });

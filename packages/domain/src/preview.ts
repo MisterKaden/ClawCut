@@ -1,3 +1,8 @@
+import type {
+  CaptionPreviewOverlay,
+  CaptionTemplate,
+  CaptionTrack
+} from "./captions";
 import type { MediaItem } from "./media";
 import type { Timeline, TimelineMarker, TimelineRegion } from "./timeline";
 
@@ -115,16 +120,6 @@ export interface SelectionOverlay {
   active: boolean;
 }
 
-export interface CaptionPlaceholderOverlay {
-  type: "caption-placeholder";
-  id: string;
-  text: string;
-  xPercent: number;
-  yPercent: number;
-  widthPercent: number;
-  heightPercent: number;
-}
-
 export interface TransformGuideOverlay {
   type: "transform-guide";
   clipId: string;
@@ -136,7 +131,7 @@ export interface PreviewOverlayModel {
   markers: MarkerOverlay[];
   regions: RegionOverlay[];
   selection: SelectionOverlay | null;
-  captions: CaptionPlaceholderOverlay[];
+  captions: CaptionPreviewOverlay[];
   transformGuides: TransformGuideOverlay[];
 }
 
@@ -158,6 +153,8 @@ export interface PreviewLoadTarget {
   cacheRoot: string;
   timeline: Timeline;
   libraryItems: MediaItem[];
+  captionTracks: CaptionTrack[];
+  captionTemplates: CaptionTemplate[];
   defaultQualityMode: PreviewQualityMode;
 }
 

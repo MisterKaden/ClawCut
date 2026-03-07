@@ -152,6 +152,8 @@ function createLoadTarget(): PreviewLoadTarget {
     cacheRoot: "/project/.clawcut/cache",
     timeline,
     libraryItems: [createMediaItem("media-1"), createMediaItem("media-2")],
+    captionTracks: [],
+    captionTemplates: [],
     defaultQualityMode: "fast"
   };
 }

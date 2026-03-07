@@ -13,6 +13,8 @@ export interface ProjectPaths {
   projectFilePath: string;
   databasePath: string;
   cacheRoot: string;
+  exportArtifactsRoot: string;
+  exportsRoot: string;
 }
 
 export interface CachePathDescriptor {
@@ -28,7 +30,9 @@ export function resolveProjectPaths(directory: string): ProjectPaths {
     directory: normalizedDirectory,
     projectFilePath: join(normalizedDirectory, PROJECT_FILE_NAME),
     databasePath: join(normalizedDirectory, PROJECT_CACHE_DIRECTORY, PROJECT_DATABASE_NAME),
-    cacheRoot
+    cacheRoot,
+    exportArtifactsRoot: join(normalizedDirectory, PROJECT_CACHE_DIRECTORY, "exports"),
+    exportsRoot: join(normalizedDirectory, "exports")
   };
 }
 
@@ -62,5 +66,29 @@ export function resolveDerivedAssetPath(
   return {
     absolutePath,
     relativePath: relative(paths.cacheRoot, absolutePath).replace(/\\/gu, "/")
+  };
+}
+
+export function resolveExportArtifactDirectory(
+  paths: ProjectPaths,
+  exportRunId: string
+): CachePathDescriptor {
+  const absolutePath = join(paths.exportArtifactsRoot, exportRunId);
+
+  return {
+    absolutePath,
+    relativePath: relative(paths.directory, absolutePath).replace(/\\/gu, "/")
+  };
+}
+
+export function resolveTranscriptionArtifactDirectory(
+  paths: ProjectPaths,
+  transcriptionRunId: string
+): CachePathDescriptor {
+  const absolutePath = join(paths.directory, PROJECT_CACHE_DIRECTORY, "transcription", transcriptionRunId);
+
+  return {
+    absolutePath,
+    relativePath: relative(paths.directory, absolutePath).replace(/\\/gu, "/")
   };
 }

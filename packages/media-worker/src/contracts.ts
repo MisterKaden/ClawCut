@@ -1,10 +1,18 @@
 import type {
+  CaptionSessionSnapshot,
   CreateProjectInput,
+  ExecuteCaptionCommandInput,
+  ExecuteCaptionCommandResult,
+  ExecuteExportCommandInput,
+  ExecuteExportCommandResult,
   ExecuteEditorCommandInput,
   ExecuteEditorCommandResult,
+  ExportSessionSnapshot,
   EditorSessionSnapshot,
+  GetCaptionSessionSnapshotInput,
   GetProjectSnapshotInput,
   GetEditorSessionSnapshotInput,
+  GetExportSessionSnapshotInput,
   ImportMediaPathsInput,
   MediaProbeResult,
   OpenProjectInput,
@@ -44,6 +52,22 @@ export interface WorkerMethodMap {
   executeEditorCommand: {
     request: ExecuteEditorCommandInput;
     response: ExecuteEditorCommandResult;
+  };
+  getExportSessionSnapshot: {
+    request: GetExportSessionSnapshotInput;
+    response: ExportSessionSnapshot;
+  };
+  executeExportCommand: {
+    request: ExecuteExportCommandInput;
+    response: ExecuteExportCommandResult;
+  };
+  getCaptionSessionSnapshot: {
+    request: GetCaptionSessionSnapshotInput;
+    response: CaptionSessionSnapshot;
+  };
+  executeCaptionCommand: {
+    request: ExecuteCaptionCommandInput;
+    response: ExecuteCaptionCommandResult;
   };
   pickImportPaths: {
     request: PickImportPathsInput | null;

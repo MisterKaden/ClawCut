@@ -1,0 +1,688 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, test, vi } from "vitest";
+
+import {
+  createEmptyProjectDocument,
+  getBuiltInCaptionTemplates,
+  getBuiltInExportPresets,
+  type Job
+} from "@clawcut/domain";
+import type { PreviewBridge } from "./preview-bridge";
+import { LocalApiController } from "./local-api";
+
+const temporaryDirectories: string[] = [];
+const activeControllers: LocalApiController[] = [];
+
+function registerTempDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+function createFakeSnapshots(directory: string) {
+  const document = createEmptyProjectDocument("Local API Test");
+  const createdAt = new Date().toISOString();
+  const exportJob: Job = {
+    id: "job-export-1",
+    kind: "export",
+    status: "queued",
+    projectDirectory: directory,
+    mediaItemId: null,
+    progress: 0,
+    step: "queued",
+    attemptCount: 1,
+    createdAt,
+    updatedAt: createdAt,
+    errorMessage: null,
+    exportRunId: "export-run-1",
+    exportMode: "video",
+    presetId: "video-share-720p",
+    outputPath: null
+  };
+  const transcriptionJob: Job = {
+    id: "job-transcription-1",
+    kind: "transcription",
+    status: "running",
+    projectDirectory: directory,
+    mediaItemId: "media-item-1",
+    progress: 25,
+    step: "extracting-audio",
+    attemptCount: 1,
+    createdAt,
+    updatedAt: createdAt,
+    errorMessage: null,
+    transcriptionRunId: "transcription-run-1",
+    transcriptId: null,
+    sourceClipId: "clip-1",
+    subtitleFormat: null
+  };
+
+  const workspaceSnapshot = {
+    directory,
+    projectFilePath: join(directory, "clawcut.project.json"),
+    databasePath: join(directory, ".clawcut", "project.db"),
+    cacheRoot: join(directory, ".clawcut", "cache"),
+    document,
+    libraryItems: [],
+    jobs: [exportJob, transcriptionJob]
+  } as const;
+
+  const editorSnapshot = {
+    ...workspaceSnapshot,
+    timeline: document.timeline,
+    history: {
+      canUndo: false,
+      canRedo: false,
+      undoDepth: 0,
+      redoDepth: 0,
+      lastUndoLabel: null,
+      lastRedoLabel: null
+    }
+  } as const;
+
+  const exportSession = {
+    directory,
+    projectName: document.project.name,
+    outputRoot: join(directory, "exports"),
+    defaultPresetId: "video-master-1080p",
+    presets: getBuiltInExportPresets(),
+    exportRuns: [
+      {
+        id: "export-run-1",
+        jobId: exportJob.id,
+        projectDirectory: directory,
+        timelineId: document.timeline.id,
+        status: "queued",
+        exportMode: "video",
+        presetId: "video-share-720p",
+        outputPath: null,
+        artifactDirectory: join(directory, ".clawcut", "exports", "export-run-1"),
+        request: {
+          timelineId: document.timeline.id,
+          presetId: "video-share-720p"
+        },
+        renderPlan: null,
+        ffmpegSpec: null,
+        verification: null,
+        diagnostics: {
+          warnings: [],
+          notes: [],
+          subtitleArtifactPaths: [],
+          renderPlanPath: null,
+          ffmpegSpecPath: null,
+          developmentManifestPath: null,
+          concatListPath: null,
+          ffmpegLogPath: null,
+          ffmpegProgressPath: null,
+          verificationPath: null,
+          snapshotManifestPath: null
+        },
+        error: null,
+        createdAt,
+        updatedAt: createdAt,
+        startedAt: null,
+        completedAt: null,
+        retryOfRunId: null,
+        cancellationRequested: false
+      }
+    ],
+    activeExportRunId: "export-run-1",
+    lastError: null
+  } as const;
+
+  const captionSession = {
+    directory,
+    projectName: document.project.name,
+    transcripts: [],
+    transcriptSummaries: [],
+    captionTracks: [],
+    templates: getBuiltInCaptionTemplates(),
+    transcriptionRuns: [
+      {
+        id: "transcription-run-1",
+        jobId: transcriptionJob.id,
+        transcriptId: null,
+        projectDirectory: directory,
+        request: {
+          source: {
+            kind: "clip",
+            timelineId: document.timeline.id,
+            clipId: "clip-1",
+            mediaItemId: "media-item-1",
+            sourceStartUs: 0,
+            sourceEndUs: 2_000_000
+          },
+          options: {
+            language: null,
+            model: "tiny",
+            wordTimestamps: true,
+            initialPrompt: "Prefer ClawCut and OpenClaw.",
+            glossaryTerms: ["ClawCut", "OpenClaw"],
+            normalizeText: true
+          }
+        },
+        status: "running",
+        rawArtifactPath: null,
+        diagnostics: {
+          warnings: [],
+          notes: [],
+          artifactDirectory: join(directory, ".clawcut", "transcription", "transcription-run-1"),
+          extractedAudioPath: null,
+          rawArtifactPath: null,
+          logPath: null
+        },
+        error: null,
+        createdAt,
+        updatedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: null,
+        retryOfRunId: null
+      }
+    ],
+    activeTranscriptionJobId: transcriptionJob.id,
+    lastError: null
+  } as const;
+
+  return {
+    workspaceSnapshot,
+    editorSnapshot,
+    exportSession,
+    captionSession
+  };
+}
+
+function createFakeWorker(directory: string, snapshots = createFakeSnapshots(directory)) {
+  const toolchainStatus = {
+    status: "ok",
+    tools: {
+      ffmpeg: {
+        name: "ffmpeg",
+        available: true,
+        resolvedPath: "/usr/local/bin/ffmpeg",
+        version: "7.1",
+        remediationHint: null
+      },
+      ffprobe: {
+        name: "ffprobe",
+        available: true,
+        resolvedPath: "/usr/local/bin/ffprobe",
+        version: "7.1",
+        remediationHint: null
+      },
+      transcription: {
+        name: "transcription",
+        available: true,
+        resolvedPath: "/usr/bin/python3",
+        version: "faster-whisper-fixture",
+        remediationHint: null
+      }
+    }
+  } as const;
+
+  return {
+    snapshots,
+    detectToolchain: vi.fn(async () => toolchainStatus),
+    createProject: vi.fn(async () => snapshots.workspaceSnapshot),
+    openProject: vi.fn(async () => snapshots.workspaceSnapshot),
+    getProjectSnapshot: vi.fn(async () => snapshots.workspaceSnapshot),
+    getEditorSessionSnapshot: vi.fn(async () => snapshots.editorSnapshot),
+    executeEditorCommand: vi.fn(async () => ({
+      snapshot: snapshots.editorSnapshot,
+      result: {
+        ok: true,
+        commandType: "SetPlayhead",
+        playheadUs: 500_000
+      }
+    })),
+    importMediaPaths: vi.fn(async (input: { paths: string[] }) => ({
+      snapshot: snapshots.workspaceSnapshot,
+      acceptedPaths: input.paths,
+      queuedJobIds: ["job-ingest-1"]
+    })),
+    relinkMediaItem: vi.fn(async () => ({
+      snapshot: snapshots.workspaceSnapshot,
+      result: {
+        ok: true,
+        confidence: "exact",
+        mediaItemId: "media-item-1",
+        previousPath: "/missing.mp4",
+        resolvedPath: "/linked.mp4",
+        notes: []
+      }
+    })),
+    retryJob: vi.fn(async () => snapshots.workspaceSnapshot),
+    getExportSessionSnapshot: vi.fn(async () => snapshots.exportSession),
+    executeExportCommand: vi.fn(async () => ({
+      snapshot: snapshots.exportSession,
+      result: {
+        ok: true,
+        commandType: "StartExport",
+        exportRun: snapshots.exportSession.exportRuns[0]
+      }
+    })),
+    getCaptionSessionSnapshot: vi.fn(async () => snapshots.captionSession),
+    executeCaptionCommand: vi.fn(async () => ({
+      snapshot: snapshots.captionSession,
+      result: {
+        ok: true,
+        commandType: "TranscribeClip",
+        run: snapshots.captionSession.transcriptionRuns[0]
+      }
+    }))
+  };
+}
+
+function createFakePreviewBridge(timelineId: string): PreviewBridge {
+  const previewState = {
+    loaded: true,
+    timelineId,
+    directory: "/tmp/project",
+    playbackStatus: "paused",
+    playheadUs: 500_000,
+    timelineEndUs: 2_000_000,
+    qualityMode: "standard",
+    sourceMode: "original",
+    playbackRate: 1,
+    activeVideoClipId: "clip-1",
+    activeAudioClipId: "clip-1-audio",
+    selection: {
+      selectedClipId: "clip-1",
+      selectedTrackId: "track-video-1"
+    },
+    loadedMedia: {
+      video: null,
+      audio: null
+    },
+    overlays: {
+      safeZones: {
+        enabled: true
+      },
+      markers: [],
+      regions: [],
+      caption: null,
+      selection: {
+        clipId: "clip-1",
+        trackId: "track-video-1"
+      }
+    } as Record<string, unknown>,
+    warning: null,
+    error: null
+  } as const;
+
+  return {
+    executeCommand: vi.fn(async (command) => ({
+      ok: true,
+      commandType: command.type,
+      state: previewState,
+      ...(command.type === "SeekPreview" ? { playheadUs: previewState.playheadUs } : {})
+    })),
+    getPreviewState: vi.fn(async () => previewState),
+    captureFrameSnapshot: vi.fn(async () => ({
+      status: "available",
+      timelineId,
+      playheadUs: previewState.playheadUs,
+      clipId: previewState.activeVideoClipId,
+      sourceMode: previewState.sourceMode,
+      mimeType: "image/png",
+      width: 320,
+      height: 180,
+      dataUrl: "data:image/png;base64,AA==",
+      warning: null,
+      error: null
+    })),
+    loadProjectTimeline: vi.fn(async () => ({
+      ok: true,
+      commandType: "LoadTimelinePreview",
+      state: previewState,
+      timelineId,
+      changed: true
+    }))
+  } as unknown as PreviewBridge;
+}
+
+async function createStartedController(options?: {
+  scopes?: Array<"read" | "edit" | "preview" | "export" | "transcript" | "admin">;
+}) {
+  const directory = registerTempDirectory("clawcut-local-api-test-");
+  const configPath = join(directory, "local-api.json");
+  const config = {
+    enabled: true,
+    host: "127.0.0.1",
+    port: 0,
+    token: "local-api-test-token",
+    scopes: options?.scopes ?? ["read", "edit", "preview", "export", "transcript", "admin"]
+  };
+
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+  const snapshots = createFakeSnapshots(directory);
+  const worker = createFakeWorker(directory, snapshots);
+  const preview = createFakePreviewBridge(snapshots.editorSnapshot.timeline.id);
+  const controller = new LocalApiController({
+    configPath,
+    worker: worker as never,
+    preview
+  });
+
+  activeControllers.push(controller);
+  await controller.initialize();
+
+  return {
+    directory,
+    worker,
+    preview,
+    controller,
+    status: controller.getStatus(),
+    token: config.token
+  };
+}
+
+async function requestJson<TData>(
+  baseUrl: string,
+  path: string,
+  options?: {
+    method?: "GET" | "POST";
+    token?: string;
+    body?: unknown;
+  }
+): Promise<{ status: number; body: TData }> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: options?.method ?? "GET",
+    headers: {
+      ...(options?.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      ...(options?.body ? { "Content-Type": "application/json" } : {})
+    },
+    body: options?.body ? JSON.stringify(options.body) : undefined
+  });
+
+  return {
+    status: response.status,
+    body: (await response.json()) as TData
+  };
+}
+
+describe.sequential("LocalApiController", () => {
+  afterEach(async () => {
+    while (activeControllers.length > 0) {
+      const controller = activeControllers.pop();
+
+      if (controller) {
+        await controller.dispose();
+      }
+    }
+
+    while (temporaryDirectories.length > 0) {
+      const directory = temporaryDirectories.pop();
+
+      if (directory) {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("keeps health public and rejects unauthorized protected requests", async () => {
+    const started = await createStartedController();
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const health = await requestJson<{ ok: boolean; data: { status: string } }>(
+      started.status.baseUrl,
+      "/api/v1/health"
+    );
+    const capabilities = await requestJson<{
+      ok: false;
+      error: { code: string; message: string; status: number };
+    }>(started.status.baseUrl, "/api/v1/capabilities");
+
+    expect(health.status).toBe(200);
+    expect(health.body.ok).toBe(true);
+    expect(capabilities.status).toBe(401);
+    expect(capabilities.body.ok).toBe(false);
+    expect(capabilities.body.error.code).toBe("AUTH_REQUIRED");
+  });
+
+  test("returns authenticated capabilities and OpenClaw tool discovery", async () => {
+    const started = await createStartedController();
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const capabilities = await requestJson<{
+      ok: true;
+      data: {
+        apiVersion: string;
+        auth: { required: boolean; scopes: string[] };
+        commands: Array<{ name: string }>;
+      };
+    }>(started.status.baseUrl, "/api/v1/capabilities", {
+      token: started.token
+    });
+    const tools = await requestJson<{
+      ok: true;
+      data: Array<{ name: string; apiName: string }>;
+    }>(started.status.baseUrl, "/api/v1/openclaw/tools", {
+      token: started.token
+    });
+
+    expect(capabilities.status).toBe(200);
+    expect(capabilities.body.data.apiVersion).toBe("v1");
+    expect(capabilities.body.data.auth.required).toBe(true);
+    expect(capabilities.body.data.commands.some((entry) => entry.name === "project.open")).toBe(
+      true
+    );
+    expect(tools.status).toBe(200);
+    expect(tools.body.data.some((entry) => entry.name === "clawcut.open_project")).toBe(true);
+    expect(tools.body.data.some((entry) => entry.apiName === "export.execute")).toBe(true);
+  });
+
+  test("rejects malformed command payloads with structured validation errors", async () => {
+    const started = await createStartedController();
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const response = await requestJson<{
+      ok: false;
+      error: { code: string; message: string; status: number };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "project.open",
+        input: {}
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.ok).toBe(false);
+    expect(response.body.error.code).toBe("INVALID_REQUEST_SCHEMA");
+  });
+
+  test("dispatches command and query operations through the worker and preview bridge", async () => {
+    const started = await createStartedController();
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const openProject = await requestJson<{
+      ok: true;
+      data: { directory: string };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "project.open",
+        input: {
+          directory: started.directory
+        }
+      }
+    });
+    const timelineSession = await requestJson<{
+      ok: true;
+      data: { timeline: { id: string } };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "timeline.session",
+        input: {
+          directory: started.directory
+        }
+      }
+    });
+    const previewState = await requestJson<{
+      ok: true;
+      data: { loaded: boolean; timelineId: string | null };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "preview.state",
+        input: {}
+      }
+    });
+    const exportCommand = await requestJson<{
+      ok: true;
+      data: { result: { ok: true; commandType: string; exportRun: { id: string } } };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "export.execute",
+        input: {
+          directory: started.directory,
+          command: {
+            type: "StartExport",
+            request: {
+              timelineId: timelineSession.body.data.timeline.id,
+              presetId: "video-share-720p"
+            }
+          }
+        }
+      }
+    });
+    const captionCommand = await requestJson<{
+      ok: true;
+      data: { result: { ok: true; commandType: string; run: { id: string } } };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "captions.execute",
+        input: {
+          directory: started.directory,
+          command: {
+            type: "TranscribeClip",
+            timelineId: timelineSession.body.data.timeline.id,
+            clipId: "clip-1"
+          }
+        }
+      }
+    });
+
+    expect(openProject.status).toBe(200);
+    expect(openProject.body.data.directory).toBe(started.directory);
+    expect(timelineSession.status).toBe(200);
+    expect(previewState.status).toBe(200);
+    expect(previewState.body.data.loaded).toBe(true);
+    expect(exportCommand.body.data.result.exportRun.id).toBe("export-run-1");
+    expect(captionCommand.body.data.result.run.id).toBe("transcription-run-1");
+    expect(started.worker.openProject).toHaveBeenCalledWith({ directory: started.directory });
+    expect(started.worker.getEditorSessionSnapshot).toHaveBeenCalledWith({
+      directory: started.directory
+    });
+    expect(started.worker.executeExportCommand).toHaveBeenCalled();
+    expect(started.worker.executeCaptionCommand).toHaveBeenCalled();
+    expect(started.preview.getPreviewState).toHaveBeenCalled();
+  });
+
+  test("enforces configured scopes for mutating or privileged operations", async () => {
+    const started = await createStartedController({
+      scopes: ["read"]
+    });
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const response = await requestJson<{
+      ok: false;
+      error: { code: string; message: string; status: number; details?: string };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "media.import",
+        input: {
+          directory: started.directory,
+          paths: ["/tmp/example.mp4"]
+        }
+      }
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("AUTH_FORBIDDEN");
+    expect(response.body.error.details).toContain("edit");
+  });
+
+  test("returns related run details for job queries", async () => {
+    const started = await createStartedController();
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const exportJob = await requestJson<{
+      ok: true;
+      data: {
+        job: { id: string; kind: string } | null;
+        exportRun: { id: string } | null;
+        transcriptionRun: { id: string } | null;
+      };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "jobs.get",
+        input: {
+          directory: started.directory,
+          jobId: "job-export-1"
+        }
+      }
+    });
+    const transcriptionJob = await requestJson<{
+      ok: true;
+      data: {
+        job: { id: string; kind: string } | null;
+        exportRun: { id: string } | null;
+        transcriptionRun: { id: string } | null;
+      };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "jobs.get",
+        input: {
+          directory: started.directory,
+          jobId: "job-transcription-1"
+        }
+      }
+    });
+
+    expect(exportJob.status).toBe(200);
+    expect(exportJob.body.data.job?.kind).toBe("export");
+    expect(exportJob.body.data.exportRun?.id).toBe("export-run-1");
+    expect(exportJob.body.data.transcriptionRun).toBeNull();
+    expect(transcriptionJob.body.data.job?.kind).toBe("transcription");
+    expect(transcriptionJob.body.data.transcriptionRun?.id).toBe("transcription-run-1");
+    expect(transcriptionJob.body.data.exportRun).toBeNull();
+  });
+});

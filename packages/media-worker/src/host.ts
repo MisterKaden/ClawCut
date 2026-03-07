@@ -4,12 +4,19 @@ import { existsSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 
 import type {
+  CaptionSessionSnapshot,
   CreateProjectInput,
+  ExecuteCaptionCommandInput,
+  ExecuteCaptionCommandResult,
+  ExecuteExportCommandInput,
+  ExecuteExportCommandResult,
   ExecuteEditorCommandInput,
   ExecuteEditorCommandResult,
+  ExportSessionSnapshot,
   EditorSessionSnapshot,
   GetProjectSnapshotInput,
   GetEditorSessionSnapshotInput,
+  GetExportSessionSnapshotInput,
   ImportMediaPathsInput,
   ImportMediaPathsResult,
   MediaProbeResult,
@@ -21,6 +28,7 @@ import type {
   RelinkMediaItemResult,
   RetryJobInput,
   ProjectWorkspaceSnapshot,
+  GetCaptionSessionSnapshotInput,
   ToolchainStatus
 } from "@clawcut/ipc";
 
@@ -37,6 +45,18 @@ import { resolveSystemBinary, serializeError } from "./utils";
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
+}
+
+export class MediaWorkerHostError extends Error {
+  public readonly code: string;
+  public readonly details?: string;
+
+  constructor(code: string, message: string, details?: string) {
+    super(message);
+    this.name = "MediaWorkerHostError";
+    this.code = code;
+    this.details = details;
+  }
 }
 
 export interface CreateMediaWorkerHostOptions {
@@ -162,7 +182,13 @@ export function createMediaWorkerHost(
     pendingRequests.delete(message.id);
 
     if (isWorkerErrorResponse(message)) {
-      pending.reject(new Error(`${message.error.code}: ${message.error.message}`));
+      pending.reject(
+        new MediaWorkerHostError(
+          message.error.code,
+          message.error.message,
+          message.error.details
+        )
+      );
       return;
     }
 
@@ -239,6 +265,26 @@ export function createMediaWorkerHost(
       input: ExecuteEditorCommandInput
     ): Promise<ExecuteEditorCommandResult> {
       return invoke("executeEditorCommand", input);
+    },
+    getExportSessionSnapshot(
+      input: GetExportSessionSnapshotInput
+    ): Promise<ExportSessionSnapshot> {
+      return invoke("getExportSessionSnapshot", input);
+    },
+    executeExportCommand(
+      input: ExecuteExportCommandInput
+    ): Promise<ExecuteExportCommandResult> {
+      return invoke("executeExportCommand", input);
+    },
+    getCaptionSessionSnapshot(
+      input: GetCaptionSessionSnapshotInput
+    ): Promise<CaptionSessionSnapshot> {
+      return invoke("getCaptionSessionSnapshot", input);
+    },
+    executeCaptionCommand(
+      input: ExecuteCaptionCommandInput
+    ): Promise<ExecuteCaptionCommandResult> {
+      return invoke("executeCaptionCommand", input);
     },
     pickImportPaths(): Promise<PickImportPathsResult> {
       throw new Error("pickImportPaths is handled in the Electron main process.");

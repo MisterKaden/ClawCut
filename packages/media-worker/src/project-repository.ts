@@ -3,6 +3,9 @@ import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import {
   createEmptyProjectDocument,
+  setCaptionExportDefaults,
+  type CaptionExportDefaults,
+  type CaptionTrack,
   type DerivedAsset,
   type DerivedAssetType,
   type MediaItem,
@@ -10,9 +13,12 @@ import {
   type JobState,
   type MediaRelinkStatus,
   migrateProjectDocument,
+  type Transcript,
   type ProjectDocumentV3,
   serializeProjectDocument,
   touchProjectDocument,
+  upsertCaptionTrack,
+  upsertTranscript,
   upsertMediaItem
 } from "@clawcut/domain";
 import type {
@@ -23,9 +29,11 @@ import { resolveProjectPaths, type ProjectPaths } from "./paths";
 import { openProjectDatabase } from "./sqlite";
 import { WorkerError, nowIso } from "./utils";
 import type {
+  PersistedExportJobPayload,
   PersistedDerivedJobPayload,
   PersistedIngestJobPayload,
   PersistedJobPayload,
+  PersistedTranscriptionJobPayload,
   StoredJobRecord
 } from "./job-payloads";
 
@@ -132,7 +140,7 @@ function rowToMediaJob(row: {
   id: string;
   project_directory: string;
   media_item_id: string | null;
-  kind: "ingest" | DerivedAssetType;
+  kind: "ingest" | DerivedAssetType | "export" | "transcription";
   status: JobState;
   progress: number;
   step: string;
@@ -158,6 +166,50 @@ function rowToMediaJob(row: {
       updatedAt: row.updated_at,
       errorMessage: row.error_message,
       sourcePath: (payload as PersistedIngestJobPayload).sourcePath
+    };
+  }
+
+  if (row.kind === "export") {
+    const payload = JSON.parse(row.payload_json) as PersistedExportJobPayload;
+
+    return {
+      id: row.id,
+      kind: "export",
+      projectDirectory: row.project_directory,
+      mediaItemId: row.media_item_id,
+      progress: row.progress,
+      step: row.step,
+      status: row.status,
+      attemptCount: row.attempt_count,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      errorMessage: row.error_message,
+      exportRunId: payload.exportRunId,
+      exportMode: payload.exportMode,
+      presetId: payload.presetId,
+      outputPath: payload.outputPath
+    };
+  }
+
+  if (row.kind === "transcription") {
+    const payload = JSON.parse(row.payload_json) as PersistedTranscriptionJobPayload;
+
+    return {
+      id: row.id,
+      kind: "transcription",
+      projectDirectory: row.project_directory,
+      mediaItemId: row.media_item_id,
+      progress: row.progress,
+      step: row.step,
+      status: row.status,
+      attemptCount: row.attempt_count,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      errorMessage: row.error_message,
+      transcriptionRunId: payload.transcriptionRunId,
+      transcriptId: payload.transcriptId,
+      sourceClipId: payload.clipId,
+      subtitleFormat: payload.subtitleFormat
     };
   }
 
@@ -204,7 +256,7 @@ export function listJobs(databasePath: string): Job[] {
       id: string;
       project_directory: string;
       media_item_id: string | null;
-      kind: "ingest" | DerivedAssetType;
+      kind: "ingest" | DerivedAssetType | "export" | "transcription";
       status: JobState;
       progress: number;
       step: string;
@@ -248,7 +300,7 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
           id: string;
           project_directory: string;
           media_item_id: string | null;
-          kind: "ingest" | DerivedAssetType;
+          kind: "ingest" | DerivedAssetType | "export" | "transcription";
           status: JobState;
           progress: number;
           step: string;
@@ -286,7 +338,7 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
 export function createJobRecord(
   databasePath: string,
   input: {
-    kind: "ingest" | DerivedAssetType;
+    kind: "ingest" | DerivedAssetType | "export" | "transcription";
     projectDirectory: string;
     mediaItemId?: string | null;
     payload: PersistedJobPayload;
@@ -369,6 +421,11 @@ export function updateJobRecord(
   const { database, close } = openProjectDatabase(databasePath);
 
   try {
+    const resolvedProgress =
+      typeof updates.progress === "number" && Number.isFinite(updates.progress)
+        ? updates.progress
+        : existing.progress;
+
     database
       .prepare(`
         UPDATE job_runs
@@ -387,7 +444,7 @@ export function updateJobRecord(
         id: jobId,
         media_item_id: updates.mediaItemId ?? existing.mediaItemId,
         status: updates.status ?? existing.status,
-        progress: updates.progress ?? existing.progress,
+        progress: resolvedProgress,
         step: updates.step ?? existing.step,
         attempt_count: updates.attemptCount ?? existing.attemptCount,
         error_message:
@@ -741,5 +798,35 @@ export async function markMediaItemDerivedFailure(
   await saveProjectDocument(paths, nextDocument);
   upsertDerivedAssetManifest(paths.databasePath, mediaItemId, failedAsset);
 
+  return nextDocument;
+}
+
+export async function updateTranscript(
+  directory: string,
+  transcript: Transcript
+): Promise<ProjectDocumentV3> {
+  const { paths, document } = await loadAndMaybeMigrateProject(directory);
+  const nextDocument = upsertTranscript(document, transcript);
+  await saveProjectDocument(paths, nextDocument);
+  return nextDocument;
+}
+
+export async function updateCaptionTrack(
+  directory: string,
+  captionTrack: CaptionTrack
+): Promise<ProjectDocumentV3> {
+  const { paths, document } = await loadAndMaybeMigrateProject(directory);
+  const nextDocument = upsertCaptionTrack(document, captionTrack);
+  await saveProjectDocument(paths, nextDocument);
+  return nextDocument;
+}
+
+export async function updateCaptionExportDefaults(
+  directory: string,
+  exportDefaults: Partial<CaptionExportDefaults>
+): Promise<ProjectDocumentV3> {
+  const { paths, document } = await loadAndMaybeMigrateProject(directory);
+  const nextDocument = setCaptionExportDefaults(document, exportDefaults);
+  await saveProjectDocument(paths, nextDocument);
   return nextDocument;
 }
