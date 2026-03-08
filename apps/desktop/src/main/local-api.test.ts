@@ -59,6 +59,22 @@ function createFakeSnapshots(directory: string) {
     sourceClipId: "clip-1",
     subtitleFormat: null
   };
+  const analysisJob: Job = {
+    id: "job-analysis-1",
+    kind: "analysis",
+    status: "completed",
+    projectDirectory: directory,
+    mediaItemId: "media-item-1",
+    progress: 100,
+    step: "completed",
+    attemptCount: 1,
+    createdAt,
+    updatedAt: createdAt,
+    errorMessage: null,
+    analysisRunId: "analysis-run-1",
+    analysisType: "silence",
+    suggestionSetId: "suggestion-set-1"
+  };
 
   const workspaceSnapshot = {
     directory,
@@ -67,7 +83,7 @@ function createFakeSnapshots(directory: string) {
     cacheRoot: join(directory, ".clawcut", "cache"),
     document,
     libraryItems: [],
-    jobs: [exportJob, transcriptionJob]
+    jobs: [exportJob, transcriptionJob, analysisJob]
   } as const;
 
   const editorSnapshot = {
@@ -186,11 +202,139 @@ function createFakeSnapshots(directory: string) {
     lastError: null
   } as const;
 
+  const smartSession = {
+    directory,
+    projectName: document.project.name,
+    suggestionSets: [
+      {
+        id: "suggestion-set-1",
+        analysisType: "silence",
+        target: {
+          kind: "clip",
+          timelineId: document.timeline.id,
+          clipId: "clip-1",
+          transcriptId: null,
+          mediaItemId: "media-item-1",
+          startUs: 0,
+          endUs: 2_000_000
+        },
+        title: "Silence opportunities",
+        summary: "1 removable silence span detected.",
+        createdAt,
+        updatedAt: createdAt,
+        completedAt: createdAt,
+        warnings: [],
+        items: [
+          {
+            id: "suggestion-1",
+            setId: "suggestion-set-1",
+            type: "silence",
+            status: "new",
+            label: "Dead air 1",
+            confidence: 0.88,
+            rationale: ["Detected a long near-silent span in the waveform envelope."],
+            evidence: [
+              {
+                kind: "waveform",
+                summary: "Buckets stayed under the configured threshold.",
+                score: 0.88
+              }
+            ],
+            suggestedAction: "ripple-delete-range",
+            previewable: true,
+            reversible: true,
+            target: {
+              timelineId: document.timeline.id,
+              clipId: "clip-1",
+              mediaItemId: "media-item-1",
+              transcriptId: null,
+              startUs: 500_000,
+              endUs: 900_000
+            },
+            planId: null,
+            createdAt,
+            updatedAt: createdAt
+          }
+        ]
+      }
+    ],
+    analysisRuns: [
+      {
+        id: "analysis-run-1",
+        jobId: analysisJob.id,
+        projectDirectory: directory,
+        suggestionSetId: "suggestion-set-1",
+        request: {
+          analysisType: "silence",
+          target: {
+            kind: "clip",
+            timelineId: document.timeline.id,
+            clipId: "clip-1",
+            transcriptId: null,
+            mediaItemId: "media-item-1",
+            startUs: 0,
+            endUs: 2_000_000
+          },
+          options: {}
+        },
+        status: "completed",
+        diagnostics: {
+          warnings: [],
+          notes: ["Silence analysis completed."],
+          artifactDirectory: join(directory, ".clawcut", "smart", "analysis-run-1"),
+          artifactPath: join(directory, ".clawcut", "smart", "analysis-run-1", "silence-suggestions.json"),
+          logPath: null
+        },
+        error: null,
+        createdAt,
+        updatedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: createdAt,
+        retryOfRunId: null
+      }
+    ],
+    editPlans: [
+      {
+        id: "plan-1",
+        timelineId: document.timeline.id,
+        suggestionSetId: "suggestion-set-1",
+        suggestionIds: ["suggestion-1"],
+        createdAt,
+        updatedAt: createdAt,
+        appliedAt: null,
+        warnings: [],
+        conflicts: [],
+        steps: [
+          {
+            id: "plan-step-1",
+            suggestionId: "suggestion-1",
+            description: "Remove a silent span.",
+            command: {
+              type: "RippleDeleteRange",
+              timelineId: document.timeline.id,
+              startUs: 500_000,
+              endUs: 900_000
+            }
+          }
+        ],
+        summary: {
+          predictedTimelineEndUs: 1_600_000,
+          predictedRemovedDurationUs: 400_000,
+          regionCountDelta: 0
+        },
+        status: "draft"
+      }
+    ],
+    activeAnalysisJobId: null,
+    lastError: null
+  } as const;
+
   return {
     workspaceSnapshot,
     editorSnapshot,
     exportSession,
-    captionSession
+    captionSession,
+    smartSession
   };
 }
 
@@ -271,6 +415,30 @@ function createFakeWorker(directory: string, snapshots = createFakeSnapshots(dir
         commandType: "TranscribeClip",
         run: snapshots.captionSession.transcriptionRuns[0]
       }
+    })),
+    getSmartSessionSnapshot: vi.fn(async () => snapshots.smartSession),
+    executeSmartCommand: vi.fn(async (input: { command: { type: string } }) => ({
+      snapshot: snapshots.smartSession,
+      result:
+        input.command.type === "ApplySuggestion"
+          ? {
+              ok: true,
+              commandType: "ApplySuggestion" as const,
+              plan: snapshots.smartSession.editPlans[0],
+              appliedSuggestionIds: ["suggestion-1"]
+            }
+          : input.command.type === "QuerySuggestionSet"
+            ? {
+                ok: true,
+                commandType: "QuerySuggestionSet" as const,
+                suggestionSet: snapshots.smartSession.suggestionSets[0]
+              }
+            : {
+                ok: true,
+                commandType: "InspectSuggestion" as const,
+                suggestionSetId: "suggestion-set-1",
+                suggestion: snapshots.smartSession.suggestionSets[0].items[0]
+              }
     }))
   };
 }
@@ -666,6 +834,71 @@ describe.sequential("LocalApiController", () => {
         }
       }
     });
+    const smartSession = await requestJson<{
+      ok: true;
+      data: { suggestionSets: Array<{ id: string }> };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "smart.session",
+        input: {
+          directory: started.directory
+        }
+      }
+    });
+    const smartInspect = await requestJson<{
+      ok: true;
+      data: { ok: true; commandType: string; suggestion: { id: string } };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "smart.suggestion",
+        input: {
+          directory: started.directory,
+          suggestionSetId: "suggestion-set-1",
+          suggestionId: "suggestion-1"
+        }
+      }
+    });
+    const smartApply = await requestJson<{
+      ok: true;
+      data: { result: { ok: true; commandType: string } };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "smart.applySuggestion",
+        input: {
+          directory: started.directory,
+          timelineId: timelineSession.body.data.timeline.id,
+          suggestionSetId: "suggestion-set-1",
+          suggestionId: "suggestion-1"
+        }
+      }
+    });
+    const smartPreviewSeek = await requestJson<{
+      ok: true;
+      data: {
+        suggestionSetId: string;
+        suggestionId: string;
+        positionUs: number;
+        loadedTimeline: boolean;
+        preview: { ok: true; commandType: string };
+      };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "smart.seekPreviewToSuggestion",
+        input: {
+          directory: started.directory,
+          suggestionSetId: "suggestion-set-1",
+          suggestionId: "suggestion-1"
+        }
+      }
+    });
 
     expect(openProject.status).toBe(200);
     expect(openProject.body.data.directory).toBe(started.directory);
@@ -678,12 +911,25 @@ describe.sequential("LocalApiController", () => {
     expect(previewFrameReference.body.data.hasImageData).toBe(true);
     expect(exportCommand.body.data.result.exportRun.id).toBe("export-run-1");
     expect(captionCommand.body.data.result.run.id).toBe("transcription-run-1");
+    expect(smartSession.body.data.suggestionSets[0]?.id).toBe("suggestion-set-1");
+    expect(smartInspect.body.data.commandType).toBe("InspectSuggestion");
+    expect(smartApply.body.data.result.commandType).toBe("ApplySuggestion");
+    expect(smartPreviewSeek.body.data.suggestionId).toBe("suggestion-1");
+    expect(smartPreviewSeek.body.data.positionUs).toBe(700_000);
+    expect(smartPreviewSeek.body.data.loadedTimeline).toBe(false);
+    expect(smartPreviewSeek.body.data.preview.commandType).toBe("SeekPreview");
     expect(started.worker.openProject).toHaveBeenCalledWith({ directory: started.directory });
     expect(started.worker.getEditorSessionSnapshot).toHaveBeenCalledWith({
       directory: started.directory
     });
     expect(started.worker.executeExportCommand).toHaveBeenCalled();
     expect(started.worker.executeCaptionCommand).toHaveBeenCalled();
+    expect(started.worker.getSmartSessionSnapshot).toHaveBeenCalled();
+    expect(started.worker.executeSmartCommand).toHaveBeenCalled();
+    expect(started.preview.executeCommand).toHaveBeenCalledWith({
+      type: "SeekPreview",
+      positionUs: 700_000
+    });
     expect(started.preview.getPreviewState).toHaveBeenCalled();
     expect(started.preview.captureFrameSnapshot).toHaveBeenCalled();
   });
@@ -798,5 +1044,6 @@ describe.sequential("LocalApiController", () => {
     expect(chunk).toContain("event: jobs.snapshot");
     expect(chunk).toContain("job-export-1");
     expect(chunk).toContain("transcription-run-1");
+    expect(chunk).toContain("suggestion-set-1");
   });
 });

@@ -319,6 +319,33 @@
     - `jobs.snapshot` carries current jobs plus related export and transcription runs for the requested project directory
   - Reason: OpenClaw should not have to rely exclusively on polling for long-running media operations, but Stage 7 does not need a full durable message bus.
 
+## Stage 8 smart-analysis persistence
+
+- Persist smart analysis artifacts as worker-owned operational records instead of canonical project-document data.
+  - Decision:
+    - suggestion sets, analysis runs, and compiled edit plans live in SQLite-backed worker storage
+    - artifacts are still serializable and inspectable through command/query APIs
+    - applying a suggestion still goes through the editor command engine and updates the canonical project timeline
+  - Reason: smart analysis is derived and heuristic. It should remain reviewable and persistent without forcing every transient suggestion artifact into the user-authored project schema.
+
+## Stage 8 smart-editing safety boundary
+
+- Make smart editing a suggestion-and-plan system, not an autonomous mutation path.
+  - Decision:
+    - analyzers only produce suggestion sets with evidence, rationale, confidence, and suggested actions
+    - edit plans are compiled explicitly before application
+    - applying smart suggestions maps to typed editor commands such as `RippleDeleteRange` and `AddRegion`
+    - OpenClaw exposure separates inspect tools from apply tools with explicit safety classes
+  - Reason: smart editing needs to remain explainable, reversible, and policy-aware, especially when OpenClaw orchestrates the workflow.
+
+## Stage 8 preview-to-suggestion review path
+
+- Expose a dedicated preview seek helper for suggestion review instead of forcing clients to stitch together inspect and preview commands manually.
+  - Decision:
+    - add a typed `smart.seekPreviewToSuggestion` command and `clawcut.seek_preview_to_suggestion` tool
+    - the helper resolves the suggestion, loads the correct timeline into preview when needed, and seeks to a stable anchor point inside the suggestion range
+  - Reason: smart suggestions should be reviewable through one explicit automation-safe command, not a fragile multi-call convention that clients have to rediscover.
+
 ## Caption generation strategy
 
 - Stage 6 groups captions one transcript segment at a time.

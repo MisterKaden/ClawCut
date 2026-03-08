@@ -7,10 +7,12 @@ import {
   type ExecuteCaptionCommandInput,
   type ExecuteExportCommandInput,
   type ExecuteEditorCommandInput,
+  type ExecuteSmartCommandInput,
   type GetCaptionSessionSnapshotInput,
   type GetExportSessionSnapshotInput,
   type GetEditorSessionSnapshotInput,
   type GetProjectSnapshotInput,
+  type GetSmartSessionSnapshotInput,
   type ImportMediaPathsInput,
   type OpenProjectInput,
   type ProbeAssetInput,
@@ -56,6 +58,14 @@ export function registerIpcHandlers(api: ClawcutApi): void {
   ipcMain.handle(
     IPC_CHANNELS.executeCaptionCommand,
     async (_event, input: ExecuteCaptionCommandInput) => api.executeCaptionCommand(input)
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.getSmartSessionSnapshot,
+    async (_event, input: GetSmartSessionSnapshotInput) => api.getSmartSessionSnapshot(input)
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.executeSmartCommand,
+    async (_event, input: ExecuteSmartCommandInput) => api.executeSmartCommand(input)
   );
   ipcMain.handle(
     IPC_CHANNELS.pickImportPaths,

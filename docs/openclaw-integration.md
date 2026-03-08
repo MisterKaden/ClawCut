@@ -61,6 +61,17 @@ Current tool coverage includes:
 - `clawcut.generate_captions`
 - `clawcut.apply_caption_template`
 - `clawcut.export_subtitles`
+- `clawcut.analyze_silence`
+- `clawcut.find_filler_words`
+- `clawcut.generate_highlight_suggestions`
+- `clawcut.list_suggestions`
+- `clawcut.inspect_suggestion`
+- `clawcut.preview_suggestion`
+- `clawcut.seek_preview_to_suggestion`
+- `clawcut.compile_edit_plan`
+- `clawcut.apply_suggestion`
+- `clawcut.apply_suggestion_set`
+- `clawcut.reject_suggestion`
 - `clawcut.start_export`
 - `clawcut.query_job`
 - `clawcut.list_jobs`
@@ -134,10 +145,16 @@ The manifest includes:
 4. `clawcut.transcribe_clip`
 5. poll `clawcut.query_job` or subscribe to `GET /api/v1/events`
 6. `clawcut.generate_captions`
-7. `clawcut.capture_preview_frame`
-8. `clawcut.start_export`
-9. poll `clawcut.query_job`
-10. inspect `export.session` or returned export state for the final output path
+7. `clawcut.analyze_silence`
+8. `clawcut.inspect_suggestion`
+9. `clawcut.seek_preview_to_suggestion`
+10. `clawcut.compile_edit_plan`
+11. wait for approval
+12. `clawcut.apply_suggestion`
+13. `clawcut.capture_preview_frame`
+14. `clawcut.start_export`
+15. poll `clawcut.query_job`
+16. inspect `export.session` or returned export state for the final output path
 
 ## Preview note
 
@@ -148,4 +165,5 @@ Preview inspection and preview control are available to OpenClaw, but the curren
 - the current adapter is a local package scaffold, not a marketplace-distributed plugin
 - the local transport is still required underneath the adapter
 - event updates are lightweight SSE snapshots, not a durable workflow bus
+- smart analysis is heuristic and explainable, not a fully autonomous edit system
 - compatibility versioning is explicit, but still early-stage and local-first

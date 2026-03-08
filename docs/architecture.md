@@ -6,9 +6,10 @@ Clawcut owns the edit model and the preview model.
 
 FFmpeg and ffprobe are execution backends. They remain outside the UI and outside the core editing semantics.
 
-After Stage 7 the application shape is:
+After Stage 8 the application shape is:
 
 - UI
+- smart analysis and suggestion workflows
 - local authenticated API
 - typed command gateways
 - pure domain engines
@@ -35,6 +36,7 @@ That is the path that later lets both the human editor and OpenClaw drive the sa
   - timeline entities
   - media and job types
   - pure timeline command engine
+  - pure smart-analysis, suggestion, and edit-plan models
   - pure preview command, state, and composition models
   - pure render compiler and export presets
   - transcript, caption, subtitle, and template models
@@ -43,6 +45,7 @@ That is the path that later lets both the human editor and OpenClaw drive the sa
   - editor session service
   - export session service
   - caption session service
+  - smart session service
   - ingest, derived assets, relink
   - ffprobe, ffmpeg, SQLite, cache IO
 
@@ -101,9 +104,56 @@ Request flow:
 4. command/query dispatch calls the existing worker session services or preview bridge
 5. response returns a structured envelope with `apiVersion`, `requestId`, `warnings`, and either `data` or a structured `error`
 
-For lightweight push updates, the same controller also exposes an authenticated SSE stream. It currently emits `ready`, `jobs.snapshot`, and `heartbeat` events so OpenClaw can observe job, export-run, and transcription-run state without relying only on polling.
+For lightweight push updates, the same controller also exposes an authenticated SSE stream. It currently emits `ready`, `jobs.snapshot`, and `heartbeat` events so OpenClaw can observe job, export-run, transcription-run, and smart-suggestion state without relying only on polling.
 
 This keeps the desktop UI, local scripts, and OpenClaw above the same trusted command/query layer.
+
+## Stage 8 smart-editing layer
+
+Stage 8 adds a dedicated smart-analysis layer without changing the rule that the command engine owns mutations.
+
+The Stage 8 flow is explicit:
+
+1. analysis
+2. suggestion set
+3. dry-run edit plan
+4. explicit apply through editor commands
+
+Main pieces:
+
+- pure analyzers and suggestion/edit-plan types in [smart-editing.ts](/Users/winten/Developer/KPStudio/packages/domain/src/smart-editing.ts)
+- worker persistence in [smart-repository.ts](/Users/winten/Developer/KPStudio/packages/media-worker/src/smart-repository.ts)
+- worker orchestration in [smart-session.ts](/Users/winten/Developer/KPStudio/packages/media-worker/src/smart-session.ts)
+- renderer review UI in [smart-panel.tsx](/Users/winten/Developer/KPStudio/apps/desktop/src/renderer/src/smart-panel.tsx)
+
+Stage 8 analyzers currently cover:
+
+- silence and dead-air detection from waveform envelopes
+- weak transcript segments from speech-density heuristics
+- filler-word detection from a configurable vocabulary list
+- highlight candidate generation from transcript timing and keyword boosts
+
+Suggestion artifacts are persisted as worker-owned records instead of canonical project-document state. That keeps them serializable and inspectable without turning heuristic analysis into required user-authored project data.
+
+Every suggestion carries:
+
+- typed target range
+- confidence
+- rationale list
+- evidence summaries
+- suggested action
+- review status
+- reversibility metadata
+
+Edit plans are explicit compiled artifacts with:
+
+- affected suggestion ids
+- generated editor commands
+- predicted removed duration
+- conflict list
+- warnings
+
+The current plan compiler maps accepted Stage 8 removal suggestions to typed `RippleDeleteRange` editor commands and highlight suggestions to `AddRegion` commands. No smart module mutates the timeline directly.
 
 ## Local API auth and safety
 
@@ -696,11 +746,14 @@ Stage 2 systems remain intact under Stage 4:
 
 Timeline clips still reference imported media items by `mediaItemId`. Preview composes from that media library state instead of inventing a separate source graph.
 
-## Known Stage 7 limitations
+## Known Stage 8 limitations
 
 - the local API is intentionally localhost-only and not designed for remote access
 - the preview bridge depends on an active desktop window and current renderer preview backend
 - the token/scope model is practical and local, not multi-user or cloud-oriented
+- smart suggestions are heuristic and explainable, not guaranteed judgments
+- transcript-aware smart edits currently compile to explicit range deletions and review regions, not arbitrary document-style text editing
+- highlight suggestions are candidate markers, not a final short-form scoring model
 - same-track overwrite editing is still out of scope
 - live multi-track audio mixing is not implemented
 - selected-range accurate preview cache is a hook only

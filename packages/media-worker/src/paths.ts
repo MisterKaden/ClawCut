@@ -92,3 +92,15 @@ export function resolveTranscriptionArtifactDirectory(
     relativePath: relative(paths.directory, absolutePath).replace(/\\/gu, "/")
   };
 }
+
+export function resolveSmartArtifactDirectory(
+  paths: ProjectPaths,
+  analysisRunId: string
+): CachePathDescriptor {
+  const absolutePath = join(paths.directory, PROJECT_CACHE_DIRECTORY, "smart", analysisRunId);
+
+  return {
+    absolutePath,
+    relativePath: relative(paths.directory, absolutePath).replace(/\\/gu, "/")
+  };
+}

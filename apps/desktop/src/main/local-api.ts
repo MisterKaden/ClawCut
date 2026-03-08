@@ -23,6 +23,7 @@ import type {
   ExecuteCaptionCommandInput,
   ExecuteEditorCommandInput,
   ExecuteExportCommandInput,
+  ExecuteSmartCommandInput,
   LocalApiCommandInputMap,
   LocalApiCommandName,
   LocalApiEventStreamDescriptor,
@@ -74,13 +75,13 @@ const DEFAULT_SCOPES: LocalApiScope[] = [
 const eventStreamQuerySchema = z.object({
   directory: z.string().min(1).optional(),
   topics: z
-    .array(z.enum(["jobs", "exports", "transcriptions"]))
-    .default(["jobs", "exports", "transcriptions"])
+    .array(z.enum(["jobs", "exports", "transcriptions", "smart"]))
+    .default(["jobs", "exports", "transcriptions", "smart"])
 });
 const EVENT_STREAM_DESCRIPTOR: LocalApiEventStreamDescriptor = {
   transport: "sse",
   path: "/api/v1/events",
-  topics: ["jobs", "exports", "transcriptions"],
+  topics: ["jobs", "exports", "transcriptions", "smart"],
   pollingFallback: "/api/v1/query"
 };
 
@@ -861,6 +862,17 @@ export class LocalApiController {
     transcriptionRuns: Awaited<
       ReturnType<LocalApiWorkerGateway["getCaptionSessionSnapshot"]>
     >["transcriptionRuns"];
+    smart: {
+      suggestionSets: Awaited<
+        ReturnType<LocalApiWorkerGateway["getSmartSessionSnapshot"]>
+      >["suggestionSets"];
+      analysisRuns: Awaited<
+        ReturnType<LocalApiWorkerGateway["getSmartSessionSnapshot"]>
+      >["analysisRuns"];
+      editPlans: Awaited<
+        ReturnType<LocalApiWorkerGateway["getSmartSessionSnapshot"]>
+      >["editPlans"];
+    };
   }> {
     const projectSnapshot = await this.worker.getProjectSnapshot({ directory });
     const exportRuns = topics.includes("exports")
@@ -869,6 +881,9 @@ export class LocalApiController {
     const transcriptionRuns = topics.includes("transcriptions")
       ? (await this.worker.getCaptionSessionSnapshot({ directory })).transcriptionRuns
       : [];
+    const smartSnapshot = topics.includes("smart")
+      ? await this.worker.getSmartSessionSnapshot({ directory })
+      : null;
 
     return {
       directory,
@@ -876,7 +891,12 @@ export class LocalApiController {
       topics,
       jobs: topics.includes("jobs") ? projectSnapshot.jobs : [],
       exportRuns,
-      transcriptionRuns
+      transcriptionRuns,
+      smart: {
+        suggestionSets: smartSnapshot?.suggestionSets ?? [],
+        analysisRuns: smartSnapshot?.analysisRuns ?? [],
+        editPlans: smartSnapshot?.editPlans ?? []
+      }
     };
   }
 
@@ -1056,6 +1076,102 @@ export class LocalApiController {
           } as ExecuteCaptionCommandInput["command"]
         });
       }
+      case "smart.analyzeSilence":
+      case "smart.analyzeWeakSegments":
+      case "smart.findFillerWords":
+      case "smart.generateHighlights":
+      case "smart.compilePlan":
+      case "smart.applySuggestion":
+      case "smart.applySuggestionSet":
+      case "smart.rejectSuggestion": {
+        const {
+          directory,
+          ...commandInput
+        } = parsed as { directory: string } & Record<string, unknown>;
+        return this.worker.executeSmartCommand({
+          directory,
+          command: {
+            ...commandInput,
+            type:
+              name === "smart.analyzeSilence"
+                ? "AnalyzeSilence"
+                : name === "smart.analyzeWeakSegments"
+                  ? "AnalyzeWeakSegments"
+                  : name === "smart.findFillerWords"
+                    ? "FindFillerWords"
+                    : name === "smart.generateHighlights"
+                      ? "GenerateHighlightSuggestions"
+                      : name === "smart.compilePlan"
+                        ? "CompileEditPlan"
+                        : name === "smart.applySuggestion"
+                          ? "ApplySuggestion"
+                          : name === "smart.applySuggestionSet"
+                            ? "ApplySuggestionSet"
+                            : "RejectSuggestion"
+          } as ExecuteSmartCommandInput["command"]
+        });
+      }
+      case "smart.seekPreviewToSuggestion": {
+        const previewInput = parsed as LocalApiCommandInputMap["smart.seekPreviewToSuggestion"];
+        const inspection = await this.worker.executeSmartCommand({
+          directory: previewInput.directory,
+          command: {
+            type: "InspectSuggestion",
+            suggestionSetId: previewInput.suggestionSetId,
+            suggestionId: previewInput.suggestionId
+          }
+        });
+
+        if (!inspection.result.ok) {
+          throw inspection.result.error;
+        }
+
+        if (inspection.result.commandType !== "InspectSuggestion") {
+          throw {
+            code: "UNSUPPORTED_OPERATION",
+            message: "The smart preview seek helper could not inspect the requested suggestion."
+          };
+        }
+
+        const suggestion = inspection.result.suggestion;
+        const anchor = previewInput.anchor ?? "midpoint";
+        const positionUs =
+          anchor === "start"
+            ? suggestion.target.startUs
+            : anchor === "end"
+              ? suggestion.target.endUs
+              : suggestion.target.startUs +
+                Math.round((suggestion.target.endUs - suggestion.target.startUs) / 2);
+        const previewState = await this.preview.getPreviewState();
+        let loadedTimeline = false;
+        let previewResult;
+
+        if (!previewState.loaded || previewState.timelineId !== suggestion.target.timelineId) {
+          const snapshot = await this.worker.getEditorSessionSnapshot({
+            directory: previewInput.directory
+          });
+
+          previewResult = await this.preview.loadProjectTimeline({
+            snapshot,
+            initialPlayheadUs: positionUs,
+            preservePlayhead: false
+          });
+          loadedTimeline = true;
+        } else {
+          previewResult = await this.preview.executeCommand({
+            type: "SeekPreview",
+            positionUs
+          });
+        }
+
+        return {
+          suggestionSetId: previewInput.suggestionSetId,
+          suggestionId: previewInput.suggestionId,
+          positionUs,
+          loadedTimeline,
+          preview: previewResult
+        };
+      }
       case "export.createRequest":
       case "export.compilePlan":
       case "export.start":
@@ -1229,6 +1345,29 @@ export class LocalApiController {
             command: {
               type: "QueryCaptionTrackState",
               captionTrackId: (parsed as LocalApiQueryInputMap["captions.track"]).captionTrackId
+            }
+          })
+        ).result;
+      case "smart.session":
+        return this.worker.getSmartSessionSnapshot(parsed as LocalApiQueryInputMap["smart.session"]);
+      case "smart.suggestionSet":
+        return (
+          await this.worker.executeSmartCommand({
+            directory: (parsed as LocalApiQueryInputMap["smart.suggestionSet"]).directory,
+            command: {
+              type: "QuerySuggestionSet",
+              suggestionSetId: (parsed as LocalApiQueryInputMap["smart.suggestionSet"]).suggestionSetId
+            }
+          })
+        ).result;
+      case "smart.suggestion":
+        return (
+          await this.worker.executeSmartCommand({
+            directory: (parsed as LocalApiQueryInputMap["smart.suggestion"]).directory,
+            command: {
+              type: "InspectSuggestion",
+              suggestionSetId: (parsed as LocalApiQueryInputMap["smart.suggestion"]).suggestionSetId,
+              suggestionId: (parsed as LocalApiQueryInputMap["smart.suggestion"]).suggestionId
             }
           })
         ).result;

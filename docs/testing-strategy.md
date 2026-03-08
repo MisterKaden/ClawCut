@@ -34,6 +34,13 @@ Vitest covers the pure project, timeline, preview, transcript/caption, and rende
   - SRT/ASS formatting
   - preview overlay activation and active-word highlighting
   - transcript summary and caption coverage reporting
+- smart editing
+  - silence detection normalization from waveform envelopes
+  - filler-word heuristic detection and timing linkage
+  - weak-segment and highlight suggestion output shape
+  - suggestion scoring, rationale, and evidence structure
+  - dry-run edit-plan compilation
+  - range-delete and region-plan command generation
 
 These tests are the main safety net because the editing and preview semantics are shared by the UI and future programmatic callers.
 
@@ -58,6 +65,10 @@ Worker tests cover Stage 2 media flows plus Stage 3 editing persistence, Stage 5
 - engine-unavailable failure and retry
 - caption-track persistence and subtitle export
 - burn-in export with caption artifacts
+- smart analysis job lifecycle
+- smart suggestion persistence and edit-plan persistence
+- suggestion application through the editor command engine
+- undo after smart-plan application
 - range export duration verification
 - development-manifest and concat artifact persistence
 - snapshot capture from completed export output
@@ -95,6 +106,8 @@ Stage 7 adds HTTP-level tests around the authenticated local control surface:
 - OpenClaw plugin adapter mapping
 - authenticated SSE event-stream updates
 - job-detail queries resolve related export and transcription runs
+- smart session queries and suggestion inspection
+- smart preview-seek command mapping for suggestion review
 
 These tests run against the real local API server class on an ephemeral localhost port with fake worker and preview bridges.
 
@@ -132,8 +145,14 @@ Smoke verification launches the built Electron app and drives the desktop shell 
 27. capture a still frame from the completed export through the local API
 28. queue an audio export through the local API and verify the output contains audio
 29. capture a still frame from a selected timeline position through the local API
-30. reopen the project and verify the timeline persisted
-31. capture a screenshot artifact
+30. run silence analysis through the OpenClaw adapter
+31. inspect and seek to a suggestion through the OpenClaw adapter
+32. compile a dry-run smart edit plan
+33. apply one smart suggestion and verify the timeline shortens
+34. reject one smart suggestion and verify its review state persists
+35. undo the smart edit and verify the timeline restores
+36. reopen the project and verify the timeline persisted
+37. capture a screenshot artifact
 
 This keeps smoke focused on the highest-value integrated editor workflow while still avoiding fragile OS dialog automation for every interaction.
 

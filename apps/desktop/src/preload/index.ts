@@ -7,10 +7,12 @@ import {
   type ExecuteCaptionCommandInput,
   type ExecuteExportCommandInput,
   type ExecuteEditorCommandInput,
+  type ExecuteSmartCommandInput,
   type GetCaptionSessionSnapshotInput,
   type GetExportSessionSnapshotInput,
   type GetEditorSessionSnapshotInput,
   type GetProjectSnapshotInput,
+  type GetSmartSessionSnapshotInput,
   type ImportMediaPathsInput,
   type SetLocalApiEnabledInput,
   type OpenProjectInput,
@@ -51,6 +53,12 @@ const clawcutApi: ClawcutApi = {
   },
   executeCaptionCommand(input: ExecuteCaptionCommandInput) {
     return electron.ipcRenderer.invoke(IPC_CHANNELS.executeCaptionCommand, input);
+  },
+  getSmartSessionSnapshot(input: GetSmartSessionSnapshotInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.getSmartSessionSnapshot, input);
+  },
+  executeSmartCommand(input: ExecuteSmartCommandInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.executeSmartCommand, input);
   },
   pickImportPaths(input?: PickImportPathsInput) {
     return electron.ipcRenderer.invoke(IPC_CHANNELS.pickImportPaths, input);

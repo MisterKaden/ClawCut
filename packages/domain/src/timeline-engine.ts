@@ -18,6 +18,7 @@ import {
   type Timeline,
   type TimelineClip,
   type TimelineMarker,
+  type TimelineRegion,
   type TimelineStreamType,
   type TimelineTrack
 } from "./timeline";
@@ -318,6 +319,42 @@ function nextTrackName(timeline: Timeline, kind: TimelineTrack["kind"]): string 
   const prefix = kind === "video" ? "V" : "A";
   const count = Object.values(timeline.tracksById).filter((track) => track.kind === kind).length;
   return `${prefix}${count + 1}`;
+}
+
+function getEditableTracksForRangeDelete(
+  command: Extract<EditorCommand, { type: "RippleDeleteRange" }>,
+  timeline: Timeline
+): TimelineTrack[] | EditorCommandFailure {
+  const targetTrackIds = command.trackIds?.length ? command.trackIds : timeline.trackOrder;
+  const tracks: TimelineTrack[] = [];
+
+  for (const trackId of targetTrackIds) {
+    const track = getTrackById(command, timeline, trackId);
+
+    if (isEditorCommandFailure(track)) {
+      return track;
+    }
+
+    const lockedError = assertTrackEditable(command, track, command.privilegedOverride);
+
+    if (lockedError) {
+      return lockedError;
+    }
+
+    tracks.push(track);
+  }
+
+  return tracks;
+}
+
+function addTimelineRegion(timeline: Timeline, region: TimelineRegion): void {
+  timeline.regions = [...timeline.regions, region].sort((left, right) => {
+    if (left.startUs === right.startUs) {
+      return left.id.localeCompare(right.id);
+    }
+
+    return left.startUs - right.startUs;
+  });
 }
 
 function buildSuccess<T extends EditorCommandExecutionResult & { ok: true }>(result: T): T {
@@ -1067,6 +1104,117 @@ export function applyEditorCommand(
       });
     }
 
+    case "RippleDeleteRange": {
+      const startUs = Math.max(0, Math.round(command.startUs));
+      const endUs = Math.max(0, Math.round(command.endUs));
+
+      if (endUs <= startUs) {
+        return fail(
+          command,
+          createError("INVALID_TIME_RANGE", "Ripple delete range must have a positive duration.")
+        );
+      }
+
+      const tracks = getEditableTracksForRangeDelete(command, nextTimeline);
+
+      if (isEditorCommandFailure(tracks)) {
+        return tracks;
+      }
+
+      const deletedClipIds: string[] = [];
+      const createdClipIds: string[] = [];
+      const shiftedClipIds = new Set<string>();
+      const touchedTrackIds = new Set<string>();
+      const touchedClipIds = new Set<string>();
+      const shiftByUs = endUs - startUs;
+
+      for (const track of tracks) {
+        const originalClips = getTrackClips(nextTimeline, track.id);
+        touchedTrackIds.add(track.id);
+
+        for (const clip of originalClips) {
+          const clipStartUs = clip.timelineStartUs;
+          const clipEndUs = getTimelineClipEndUs(clip);
+
+          if (clipEndUs <= startUs) {
+            continue;
+          }
+
+          if (clipStartUs >= endUs) {
+            clip.timelineStartUs = Math.max(0, clip.timelineStartUs - shiftByUs);
+            shiftedClipIds.add(clip.id);
+            touchedClipIds.add(clip.id);
+            continue;
+          }
+
+          const leftKeeps = clipStartUs < startUs;
+          const rightKeeps = clipEndUs > endUs;
+
+          if (!leftKeeps && !rightKeeps) {
+            delete nextTimeline.clipsById[clip.id];
+            removeClipFromTrack(nextTimeline, track.id, clip.id);
+            deletedClipIds.push(clip.id);
+            continue;
+          }
+
+          if (leftKeeps && !rightKeeps) {
+            const preservedDurationUs = Math.round((startUs - clipStartUs) * clip.speed);
+            clip.sourceOutUs = clip.sourceInUs + preservedDurationUs;
+            touchedClipIds.add(clip.id);
+            continue;
+          }
+
+          if (!leftKeeps && rightKeeps) {
+            const trimmedTimelineUs = endUs - clipStartUs;
+            clip.sourceInUs += Math.round(trimmedTimelineUs * clip.speed);
+            clip.timelineStartUs = startUs;
+            touchedClipIds.add(clip.id);
+            continue;
+          }
+
+          const leftDurationUs = Math.round((startUs - clipStartUs) * clip.speed);
+          const rightClipId = generateId();
+          const rightSourceInUs =
+            clip.sourceInUs + Math.round((endUs - clipStartUs) * clip.speed);
+          const rightClip: TimelineClip = {
+            ...clip,
+            id: rightClipId,
+            sourceInUs: rightSourceInUs,
+            timelineStartUs: startUs
+          };
+
+          clip.sourceOutUs = clip.sourceInUs + leftDurationUs;
+          nextTimeline.clipsById[rightClip.id] = rightClip;
+          addClipToTrack(nextTimeline, track.id, rightClip.id);
+          createdClipIds.push(rightClip.id);
+          touchedClipIds.add(clip.id);
+          touchedClipIds.add(rightClip.id);
+        }
+
+        sortTrackClipIds(nextTimeline, track.id);
+      }
+
+      return buildSuccess({
+        ok: true,
+        commandType: "RippleDeleteRange",
+        timelineId: nextTimeline.id,
+        historyEntryId: null,
+        changed: true,
+        touchedClipIds: [...touchedClipIds],
+        touchedTrackIds: [...touchedTrackIds],
+        snapDeltaUs: null,
+        deletedClipIds,
+        createdClipIds,
+        shiftedClipIds: [...shiftedClipIds],
+        shiftByUs,
+        startUs,
+        endUs,
+        nextTimeline,
+        reversible: true,
+        historyLabel: "Ripple delete range"
+      });
+    }
+
     case "LockTrack": {
       const track = getTrackById(command, nextTimeline, command.trackId);
 
@@ -1177,6 +1325,49 @@ export function applyEditorCommand(
         nextTimeline,
         reversible: true,
         historyLabel: "Remove marker"
+      });
+    }
+
+    case "AddRegion": {
+      const startUs = Math.max(0, Math.round(command.startUs));
+      const endUs = Math.max(0, Math.round(command.endUs));
+
+      if (endUs <= startUs) {
+        return fail(
+          command,
+          createError("INVALID_TIME_RANGE", "Region bounds must define a positive duration.")
+        );
+      }
+
+      const snapResolution = resolveRangeSnap(
+        nextTimeline,
+        startUs,
+        endUs - startUs,
+        command.snapToTargets ?? false,
+        new Set<string>()
+      );
+      const region: TimelineRegion = {
+        id: command.regionId ?? generateId(),
+        startUs: snapResolution.valueUs,
+        endUs: snapResolution.valueUs + (endUs - startUs),
+        label: command.label
+      };
+
+      addTimelineRegion(nextTimeline, region);
+
+      return buildSuccess({
+        ok: true,
+        commandType: "AddRegion",
+        timelineId: nextTimeline.id,
+        historyEntryId: null,
+        changed: true,
+        touchedClipIds: [],
+        touchedTrackIds: [],
+        snapDeltaUs: snapResolution.snapDeltaUs,
+        region,
+        nextTimeline,
+        reversible: true,
+        historyLabel: "Add region"
       });
     }
 

@@ -315,6 +315,85 @@ const setBurnInSchema = z.object({
   captionTrackId: nonEmptyString.nullable(),
   enabled: z.boolean()
 });
+const smartSilenceAnalysisSchema = z.object({
+  directory: nonEmptyString,
+  timelineId: nonEmptyString,
+  clipId: nonEmptyString,
+  options: z
+    .object({
+      amplitudeThreshold: z.number().min(0).max(1).optional(),
+      peakThreshold: z.number().min(0).max(1).optional(),
+      minimumDurationUs: nonNegativeInt.optional()
+    })
+    .optional()
+});
+const smartWeakSegmentAnalysisSchema = z.object({
+  directory: nonEmptyString,
+  transcriptId: nonEmptyString,
+  options: z
+    .object({
+      minimumDurationUs: nonNegativeInt.optional(),
+      wordsPerSecondThreshold: z.number().positive().optional()
+    })
+    .optional()
+});
+const smartFillerAnalysisSchema = z.object({
+  directory: nonEmptyString,
+  transcriptId: nonEmptyString,
+  options: z
+    .object({
+      vocabulary: z.array(nonEmptyString).optional(),
+      paddingUs: nonNegativeInt.optional()
+    })
+    .optional()
+});
+const smartHighlightSchema = z.object({
+  directory: nonEmptyString,
+  transcriptId: nonEmptyString,
+  options: z
+    .object({
+      minimumDurationUs: nonNegativeInt.optional(),
+      maximumDurationUs: nonNegativeInt.optional(),
+      keywordBoostTerms: z.array(nonEmptyString).optional(),
+      minimumScore: z.number().min(0).max(1).optional()
+    })
+    .optional()
+});
+const smartCompilePlanSchema = z.object({
+  directory: nonEmptyString,
+  timelineId: nonEmptyString,
+  suggestionSetId: nonEmptyString,
+  suggestionIds: z.array(nonEmptyString).optional()
+});
+const smartApplySuggestionSchema = z.object({
+  directory: nonEmptyString,
+  timelineId: nonEmptyString,
+  suggestionSetId: nonEmptyString,
+  suggestionId: nonEmptyString
+});
+const smartApplySuggestionSetSchema = z.object({
+  directory: nonEmptyString,
+  timelineId: nonEmptyString,
+  suggestionSetId: nonEmptyString,
+  suggestionIds: z.array(nonEmptyString).optional()
+});
+const smartRejectSuggestionSchema = z.object({
+  directory: nonEmptyString,
+  suggestionSetId: nonEmptyString,
+  suggestionId: nonEmptyString
+});
+const smartSuggestionSetQuerySchema = z.object({
+  directory: nonEmptyString,
+  suggestionSetId: nonEmptyString
+});
+const smartSuggestionQuerySchema = z.object({
+  directory: nonEmptyString,
+  suggestionSetId: nonEmptyString,
+  suggestionId: nonEmptyString
+});
+const smartSuggestionPreviewSchema = smartSuggestionQuerySchema.extend({
+  anchor: z.enum(["start", "midpoint", "end"]).optional()
+});
 const exportRequestSchema = z.object({
   timelineId: nonEmptyString,
   exportMode: z.enum(["video", "audio", "frame"]).optional(),
@@ -1176,6 +1255,256 @@ const COMMAND_DEFINITIONS: CommandDefinition[] = [
   },
   {
     kind: "command",
+    name: "smart.analyzeSilence",
+    category: "smart",
+    description: "Analyze a clip waveform for removable silence or dead air ranges.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        timelineId: stringProperty("Timeline id."),
+        clipId: stringProperty("Clip id to analyze."),
+        options: objectProperty(
+          "Optional silence analysis tuning.",
+          {
+            amplitudeThreshold: {
+              type: "number",
+              description: "RMS threshold from 0 to 1."
+            },
+            peakThreshold: {
+              type: "number",
+              description: "Peak threshold from 0 to 1."
+            },
+            minimumDurationUs: integerProperty("Minimum removable silence duration in microseconds.")
+          },
+          []
+        )
+      },
+      ["directory", "timelineId", "clipId"]
+    ),
+    outputDescription: "Returns the updated smart session snapshot with a silence suggestion set and analysis run.",
+    parser: smartSilenceAnalysisSchema
+  },
+  {
+    kind: "command",
+    name: "smart.analyzeWeakSegments",
+    category: "smart",
+    description: "Analyze transcript timing density for weak or low-value segments.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        transcriptId: stringProperty("Transcript id."),
+        options: objectProperty(
+          "Optional density analysis tuning.",
+          {
+            minimumDurationUs: integerProperty("Minimum weak segment duration in microseconds."),
+            wordsPerSecondThreshold: {
+              type: "number",
+              description: "Words-per-second threshold below which a segment is flagged."
+            }
+          },
+          []
+        )
+      },
+      ["directory", "transcriptId"]
+    ),
+    outputDescription: "Returns the updated smart session snapshot with weak-segment suggestions.",
+    parser: smartWeakSegmentAnalysisSchema
+  },
+  {
+    kind: "command",
+    name: "smart.findFillerWords",
+    category: "smart",
+    description: "Analyze transcript content for timing-linked filler word opportunities.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        transcriptId: stringProperty("Transcript id."),
+        options: objectProperty(
+          "Optional filler-word tuning.",
+          {
+            vocabulary: arrayProperty(stringProperty("Filler term or phrase."), "Custom filler vocabulary."),
+            paddingUs: integerProperty("Padding to keep around detected filler spans in microseconds.")
+          },
+          []
+        )
+      },
+      ["directory", "transcriptId"]
+    ),
+    outputDescription: "Returns the updated smart session snapshot with filler-word suggestions.",
+    parser: smartFillerAnalysisSchema
+  },
+  {
+    kind: "command",
+    name: "smart.generateHighlights",
+    category: "smart",
+    description: "Generate explainable highlight suggestions from transcript timing and keyword signals.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        transcriptId: stringProperty("Transcript id."),
+        options: objectProperty(
+          "Optional highlight scoring settings.",
+          {
+            minimumDurationUs: integerProperty("Minimum highlight duration in microseconds."),
+            maximumDurationUs: integerProperty("Maximum highlight duration in microseconds."),
+            keywordBoostTerms: arrayProperty(stringProperty("Highlight keyword."), "Keywords that boost highlight scores."),
+            minimumScore: {
+              type: "number",
+              description: "Minimum score threshold from 0 to 1."
+            }
+          },
+          []
+        )
+      },
+      ["directory", "transcriptId"]
+    ),
+    outputDescription: "Returns the updated smart session snapshot with highlight suggestions.",
+    parser: smartHighlightSchema
+  },
+  {
+    kind: "command",
+    name: "smart.compilePlan",
+    category: "smart",
+    description: "Compile accepted smart suggestions into an explicit, inspectable edit plan.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        timelineId: stringProperty("Timeline id."),
+        suggestionSetId: stringProperty("Suggestion set id."),
+        suggestionIds: arrayProperty(stringProperty("Suggestion id."), "Optional subset of suggestions to compile.")
+      },
+      ["directory", "timelineId", "suggestionSetId"]
+    ),
+    outputDescription: "Returns a dry-run smart edit plan with command steps, conflicts, and predicted removals.",
+    parser: smartCompilePlanSchema
+  },
+  {
+    kind: "command",
+    name: "smart.applySuggestion",
+    category: "smart",
+    description: "Apply one reviewed smart suggestion through the timeline command engine.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        timelineId: stringProperty("Timeline id."),
+        suggestionSetId: stringProperty("Suggestion set id."),
+        suggestionId: stringProperty("Suggestion id.")
+      },
+      ["directory", "timelineId", "suggestionSetId", "suggestionId"]
+    ),
+    outputDescription: "Returns the applied smart plan and linked suggestion ids.",
+    parser: smartApplySuggestionSchema
+  },
+  {
+    kind: "command",
+    name: "smart.applySuggestionSet",
+    category: "smart",
+    description: "Apply multiple reviewed smart suggestions through the timeline command engine.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        timelineId: stringProperty("Timeline id."),
+        suggestionSetId: stringProperty("Suggestion set id."),
+        suggestionIds: arrayProperty(stringProperty("Suggestion id."), "Optional subset of suggestions to apply.")
+      },
+      ["directory", "timelineId", "suggestionSetId"]
+    ),
+    outputDescription: "Returns the applied smart plan and linked suggestion ids.",
+    parser: smartApplySuggestionSetSchema
+  },
+  {
+    kind: "command",
+    name: "smart.rejectSuggestion",
+    category: "smart",
+    description: "Mark a smart suggestion as rejected without mutating the timeline.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        suggestionSetId: stringProperty("Suggestion set id."),
+        suggestionId: stringProperty("Suggestion id.")
+      },
+      ["directory", "suggestionSetId", "suggestionId"]
+    ),
+    outputDescription: "Returns the updated suggestion set with the rejected status recorded.",
+    parser: smartRejectSuggestionSchema
+  },
+  {
+    kind: "command",
+    name: "smart.seekPreviewToSuggestion",
+    category: "smart",
+    description: "Load or seek the preview session to a smart suggestion range for review.",
+    requiredScopes: ["preview"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        suggestionSetId: stringProperty("Suggestion set id."),
+        suggestionId: stringProperty("Suggestion id."),
+        anchor: enumProperty(
+          ["start", "midpoint", "end"],
+          "Which point inside the suggestion range should be used for preview seek."
+        )
+      },
+      ["directory", "suggestionSetId", "suggestionId"]
+    ),
+    outputDescription:
+      "Returns the resolved suggestion id, preview seek position, whether the timeline had to be loaded, and the resulting preview state.",
+    parser: smartSuggestionPreviewSchema
+  },
+  {
+    kind: "command",
     name: "export.createRequest",
     category: "export",
     description: "Validate and normalize an export request without running FFmpeg.",
@@ -1632,6 +1961,69 @@ const QUERY_DEFINITIONS: QueryDefinition[] = [
   },
   {
     kind: "query",
+    name: "smart.session",
+    category: "smart",
+    description: "Return persisted smart suggestion sets, edit plans, and analysis runs for a project.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns the smart session snapshot.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "smart.suggestionSet",
+    category: "smart",
+    description: "Return one smart suggestion set.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        suggestionSetId: stringProperty("Suggestion set id.")
+      },
+      ["directory", "suggestionSetId"]
+    ),
+    outputDescription: "Returns the requested suggestion set result.",
+    parser: smartSuggestionSetQuerySchema
+  },
+  {
+    kind: "query",
+    name: "smart.suggestion",
+    category: "smart",
+    description: "Return one smart suggestion with confidence, rationale, and evidence.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        suggestionSetId: stringProperty("Suggestion set id."),
+        suggestionId: stringProperty("Suggestion id.")
+      },
+      ["directory", "suggestionSetId", "suggestionId"]
+    ),
+    outputDescription: "Returns the requested suggestion result.",
+    parser: smartSuggestionQuerySchema
+  },
+  {
+    kind: "query",
     name: "jobs.list",
     category: "jobs",
     description: "Return the current job list for a project.",
@@ -1851,6 +2243,39 @@ const OPENCLAW_TOOL_RECORDS: OpenClawToolDefinitionRecord[] = [
   ]),
   createToolRecordFromOperation("clawcut.export_subtitles", "captions.exportSubtitles", false, [
     "Writes a sidecar subtitle artifact."
+  ]),
+  createToolRecordFromOperation("clawcut.analyze_silence", "smart.analyzeSilence", true, [
+    "Read-only analysis. Produces reviewable suggestion artifacts without mutating the timeline."
+  ]),
+  createToolRecordFromOperation("clawcut.find_filler_words", "smart.findFillerWords", true, [
+    "Read-only analysis. Uses explainable transcript heuristics."
+  ]),
+  createToolRecordFromOperation("clawcut.generate_highlight_suggestions", "smart.generateHighlights", true, [
+    "Read-only analysis. Generates reviewable highlight candidates."
+  ]),
+  createToolRecordFromOperation("clawcut.list_suggestions", "smart.session", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.inspect_suggestion", "smart.suggestion", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.preview_suggestion", "smart.suggestion", true, [
+    "Read-only suggestion inspection. Combine with preview seek tools for visual review."
+  ]),
+  createToolRecordFromOperation("clawcut.seek_preview_to_suggestion", "smart.seekPreviewToSuggestion", false, [
+    "Loads the correct timeline if needed, then seeks the live desktop preview session to the suggestion range."
+  ]),
+  createToolRecordFromOperation("clawcut.compile_edit_plan", "smart.compilePlan", true, [
+    "Compiles a dry-run plan without mutating the timeline."
+  ]),
+  createToolRecordFromOperation("clawcut.apply_suggestion", "smart.applySuggestion", false, [
+    "High-impact operation. Applies timeline mutations through the ClawCut command engine."
+  ]),
+  createToolRecordFromOperation("clawcut.apply_suggestion_set", "smart.applySuggestionSet", false, [
+    "High-impact operation. Applies multiple timeline mutations through the ClawCut command engine."
+  ]),
+  createToolRecordFromOperation("clawcut.reject_suggestion", "smart.rejectSuggestion", false, [
+    "Mutates suggestion review state without changing the timeline."
   ]),
   createToolRecordFromOperation("clawcut.start_export", "export.start", false, [
     "Starts a long-running export job."
@@ -2094,6 +2519,7 @@ export function createLocalApiCapabilities(scopes: LocalApiScope[]): LocalApiCap
       project: true,
       media: true,
       timeline: true,
+      smartEditing: true,
       preview: true,
       previewInspection: true,
       export: true,

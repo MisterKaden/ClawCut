@@ -67,6 +67,24 @@ describe("control schema", () => {
     });
   });
 
+  test("maps suggestion preview seek tools to the explicit smart preview operation", () => {
+    const invocation = mapOpenClawToolInvocation("clawcut.seek_preview_to_suggestion", {
+      directory: "/tmp/project",
+      suggestionSetId: "suggestion-set-1",
+      suggestionId: "suggestion-1"
+    });
+
+    expect(invocation).toEqual({
+      operationType: "command",
+      name: "smart.seekPreviewToSuggestion",
+      input: {
+        directory: "/tmp/project",
+        suggestionSetId: "suggestion-set-1",
+        suggestionId: "suggestion-1"
+      }
+    });
+  });
+
   test("publishes explicit high-impact tools", () => {
     const highImpactTools = OPENCLAW_TOOL_DEFINITIONS.filter(
       (tool) => tool.safetyClass === "high-impact"
@@ -74,6 +92,7 @@ describe("control schema", () => {
 
     expect(highImpactTools.some((tool) => tool.name === "clawcut.import_media")).toBe(true);
     expect(highImpactTools.some((tool) => tool.name === "clawcut.start_export")).toBe(true);
+    expect(highImpactTools.some((tool) => tool.name === "clawcut.apply_suggestion")).toBe(true);
   });
 
   test("only exposes read-only tools by default", () => {
@@ -82,6 +101,18 @@ describe("control schema", () => {
     expect(defaultEnabled.every((tool) => tool.safetyClass === "read-only")).toBe(true);
     expect(
       OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.open_project")
+        ?.availableByDefault
+    ).toBe(false);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.analyze_silence")
+        ?.availableByDefault
+    ).toBe(true);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.apply_suggestion")
+        ?.availableByDefault
+    ).toBe(false);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.seek_preview_to_suggestion")
         ?.availableByDefault
     ).toBe(false);
   });

@@ -110,7 +110,28 @@ Acceptance criteria:
 - long-running actions return machine-readable job-linked state
 - UI surfaces the local API status and token
 
-## Stage 8: Hardening
+## Stage 8: Smart editing
+
+Status: complete
+
+Delivered:
+
+- silence and dead-air analysis produces persisted suggestion sets
+- filler-word detection is transcript-aware and timing-linked
+- highlight candidate generation exists as an explainable heuristic workflow
+- suggestion sets and edit plans are machine-readable and persisted
+- dry-run edit-plan compilation exists before any mutation
+- accepted suggestions apply through the existing command engine
+- preview and OpenClaw can inspect and seek to suggestion ranges
+- safety classes distinguish inspect, review, and apply paths
+
+Current Stage 8 notes:
+
+- smart analysis is heuristic and explainable, not autonomous
+- transcript-based edits currently map to explicit range removals and review regions
+- silence and highlight quality depends on waveform/transcript quality from earlier stages
+
+## Stage 9: Hardening
 
 Acceptance criteria:
 
@@ -119,7 +140,7 @@ Acceptance criteria:
 - packaged builds exist
 - performance budgets and regression fixtures run in CI
 
-## Stage 9: Beast mode
+## Stage 10: Beast mode
 
 Acceptance criteria:
 

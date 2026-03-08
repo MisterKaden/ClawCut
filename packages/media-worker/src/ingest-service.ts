@@ -404,7 +404,8 @@ async function runDerivedJob(directory: string, jobId: string): Promise<void> {
     !storedJob ||
     storedJob.kind === "ingest" ||
     storedJob.kind === "export" ||
-    storedJob.kind === "transcription"
+    storedJob.kind === "transcription" ||
+    storedJob.kind === "analysis"
   ) {
     return;
   }

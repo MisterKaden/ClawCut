@@ -86,8 +86,54 @@ function applyMigrations(database: Database.Database): void {
       retry_of_run_id TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS smart_analysis_runs (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      suggestion_set_id TEXT,
+      project_directory TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      diagnostics_json TEXT NOT NULL,
+      error_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      retry_of_run_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS smart_suggestion_sets (
+      id TEXT PRIMARY KEY,
+      project_directory TEXT NOT NULL,
+      analysis_type TEXT NOT NULL,
+      target_json TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      warnings_json TEXT NOT NULL,
+      items_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS smart_edit_plans (
+      id TEXT PRIMARY KEY,
+      project_directory TEXT NOT NULL,
+      timeline_id TEXT NOT NULL,
+      suggestion_set_id TEXT,
+      suggestion_ids_json TEXT NOT NULL,
+      warnings_json TEXT NOT NULL,
+      conflicts_json TEXT NOT NULL,
+      steps_json TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      applied_at TEXT
+    );
+
     INSERT INTO schema_metadata (key, value)
-    VALUES ('schema_version', '4')
+    VALUES ('schema_version', '5')
     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
   `);
 }

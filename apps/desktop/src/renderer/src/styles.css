@@ -284,6 +284,25 @@ button {
   justify-content: flex-end;
 }
 
+.plain-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.callout {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(8, 14, 18, 0.82);
+}
+
+.callout--warning {
+  border-color: rgba(228, 176, 106, 0.24);
+  background: rgba(34, 22, 12, 0.5);
+}
+
 .primary-button,
 .secondary-button,
 .ghost-button,
@@ -1135,6 +1154,105 @@ button {
   background: rgba(9, 16, 20, 0.92);
 }
 
+.smart-panel {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: rgba(9, 16, 20, 0.92);
+}
+
+.smart-panel__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.9fr);
+  gap: 18px;
+}
+
+.smart-surface,
+.smart-sidebar__section {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(12, 22, 28, 0.82);
+}
+
+.smart-sidebar {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+.smart-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.smart-toolbar__actions {
+  justify-content: flex-end;
+}
+
+.smart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.smart-summary__item {
+  display: grid;
+  gap: 4px;
+  min-width: 120px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(8, 14, 18, 0.88);
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 12px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.suggestion-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(8, 14, 18, 0.88);
+}
+
+.suggestion-card__header,
+.suggestion-card__meta {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.suggestion-card__meta {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.suggestion-card__reasons {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.empty-panel--smart {
+  min-height: 240px;
+}
+
 .caption-panel__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1330,7 +1448,8 @@ button {
   .hero__grid,
   .workspace,
   .export-panel__grid,
-  .caption-panel__grid {
+  .caption-panel__grid,
+  .smart-panel__grid {
     grid-template-columns: 1fr;
   }
 

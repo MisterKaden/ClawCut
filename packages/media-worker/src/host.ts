@@ -12,6 +12,8 @@ import type {
   ExecuteExportCommandResult,
   ExecuteEditorCommandInput,
   ExecuteEditorCommandResult,
+  ExecuteSmartCommandInput,
+  ExecuteSmartCommandResult,
   ExportSessionSnapshot,
   EditorSessionSnapshot,
   GetProjectSnapshotInput,
@@ -29,6 +31,8 @@ import type {
   RetryJobInput,
   ProjectWorkspaceSnapshot,
   GetCaptionSessionSnapshotInput,
+  GetSmartSessionSnapshotInput,
+  SmartSessionSnapshot,
   ToolchainStatus
 } from "@clawcut/ipc";
 
@@ -285,6 +289,16 @@ export function createMediaWorkerHost(
       input: ExecuteCaptionCommandInput
     ): Promise<ExecuteCaptionCommandResult> {
       return invoke("executeCaptionCommand", input);
+    },
+    getSmartSessionSnapshot(
+      input: GetSmartSessionSnapshotInput
+    ): Promise<SmartSessionSnapshot> {
+      return invoke("getSmartSessionSnapshot", input);
+    },
+    executeSmartCommand(
+      input: ExecuteSmartCommandInput
+    ): Promise<ExecuteSmartCommandResult> {
+      return invoke("executeSmartCommand", input);
     },
     pickImportPaths(): Promise<PickImportPathsResult> {
       throw new Error("pickImportPaths is handled in the Electron main process.");

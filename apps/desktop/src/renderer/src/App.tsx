@@ -7,6 +7,8 @@ import type {
   ExportPresetId,
   MediaItem,
   Job,
+  SmartCommand,
+  SmartSuggestionItem,
   TranscriptionOptions,
   WaveformAsset
 } from "@clawcut/domain";
@@ -19,6 +21,8 @@ import type {
   ExportSessionSnapshot,
   ExecuteEditorCommandResult,
   ExecuteExportCommandResult,
+  ExecuteSmartCommandResult,
+  SmartSessionSnapshot,
   ToolchainStatus
 } from "@clawcut/ipc";
 
@@ -26,6 +30,7 @@ import { CaptionPanel } from "./caption-panel";
 import { ExportPanel } from "./export-panel";
 import { createPreviewLoadTarget, previewController } from "./preview-controller";
 import { PreviewPanel } from "./preview-panel";
+import { SmartPanel } from "./smart-panel";
 import { TimelineEditor } from "./timeline-editor";
 
 interface OperationState {
@@ -260,6 +265,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<EditorSessionSnapshot | null>(null);
   const [exportSnapshot, setExportSnapshot] = useState<ExportSessionSnapshot | null>(null);
   const [captionSnapshot, setCaptionSnapshot] = useState<CaptionSessionSnapshot | null>(null);
+  const [smartSnapshot, setSmartSnapshot] = useState<SmartSessionSnapshot | null>(null);
   const [selectedExportPresetId, setSelectedExportPresetId] = useState<ExportPresetId | null>(null);
   const [selectedExportTargetKey, setSelectedExportTargetKey] = useState("timeline");
   const [customRangeStartSeconds, setCustomRangeStartSeconds] = useState("0");
@@ -293,6 +299,7 @@ export function App() {
     if (!snapshot) {
       setExportSnapshot(null);
       setCaptionSnapshot(null);
+      setSmartSnapshot(null);
       setSelectedExportPresetId(null);
       setSelectedExportTargetKey("timeline");
       setCustomRangeStartSeconds("0");
@@ -414,6 +421,14 @@ export function App() {
     }
   });
 
+  const refreshSmartSnapshotSilently = useEffectEvent(async (directory: string) => {
+    try {
+      await loadSmartSession(directory);
+    } catch {
+      // Keep the visible state stable during background polling.
+    }
+  });
+
   useEffect(() => {
     if (!snapshot) {
       return;
@@ -455,6 +470,20 @@ export function App() {
       window.clearInterval(intervalId);
     };
   }, [captionSnapshot, refreshCaptionSnapshotSilently]);
+
+  useEffect(() => {
+    if (!smartSnapshot) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshSmartSnapshotSilently(smartSnapshot.directory);
+    }, 1_250);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshSmartSnapshotSilently, smartSnapshot]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -513,6 +542,14 @@ export function App() {
     return nextCaptionSnapshot;
   }
 
+  async function loadSmartSession(directory: string): Promise<SmartSessionSnapshot> {
+    const nextSmartSnapshot = await window.clawcut.getSmartSessionSnapshot({ directory });
+    startTransition(() => {
+      setSmartSnapshot(nextSmartSnapshot);
+    });
+    return nextSmartSnapshot;
+  }
+
   async function withOperation<T>(
     message: string,
     task: () => Promise<T>
@@ -554,7 +591,8 @@ export function App() {
     await Promise.all([
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
-      loadCaptionSession(result.directory)
+      loadCaptionSession(result.directory),
+      loadSmartSession(result.directory)
     ]);
   }
 
@@ -573,7 +611,8 @@ export function App() {
     await Promise.all([
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
-      loadCaptionSession(result.directory)
+      loadCaptionSession(result.directory),
+      loadSmartSession(result.directory)
     ]);
   }
 
@@ -601,7 +640,8 @@ export function App() {
     await Promise.all([
       loadEditorSession(result.snapshot.directory),
       loadExportSession(result.snapshot.directory),
-      loadCaptionSession(result.snapshot.directory)
+      loadCaptionSession(result.snapshot.directory),
+      loadSmartSession(result.snapshot.directory)
     ]);
   }
 
@@ -635,7 +675,8 @@ export function App() {
     await Promise.all([
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
-      loadCaptionSession(result.directory)
+      loadCaptionSession(result.directory),
+      loadSmartSession(result.directory)
     ]);
   }
 
@@ -658,7 +699,8 @@ export function App() {
     await Promise.all([
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
-      loadCaptionSession(result.directory)
+      loadCaptionSession(result.directory),
+      loadSmartSession(result.directory)
     ]);
   }
 
@@ -694,7 +736,8 @@ export function App() {
     await Promise.all([
       loadEditorSession(result.snapshot.directory),
       loadExportSession(result.snapshot.directory),
-      loadCaptionSession(result.snapshot.directory)
+      loadCaptionSession(result.snapshot.directory),
+      loadSmartSession(result.snapshot.directory)
     ]);
   }
 
@@ -772,7 +815,41 @@ export function App() {
     startTransition(() => {
       setCaptionSnapshot(result.snapshot);
     });
-    await loadEditorSession(snapshot.directory);
+    await Promise.all([loadEditorSession(snapshot.directory), loadSmartSession(snapshot.directory)]);
+
+    return result;
+  }
+
+  async function handleExecuteSmartCommand(
+    command: SmartCommand,
+    message: string
+  ): Promise<ExecuteSmartCommandResult | null> {
+    if (!snapshot) {
+      return null;
+    }
+
+    const result = await withOperation(message, async () =>
+      window.clawcut.executeSmartCommand({
+        directory: snapshot.directory,
+        command
+      })
+    );
+
+    if (!result) {
+      return null;
+    }
+
+    startTransition(() => {
+      setSmartSnapshot(result.snapshot);
+    });
+
+    if (
+      result.result.ok &&
+      (result.result.commandType === "ApplySuggestion" ||
+        result.result.commandType === "ApplySuggestionSet")
+    ) {
+      await loadEditorSession(snapshot.directory);
+    }
 
     return result;
   }
@@ -807,6 +884,23 @@ export function App() {
     if (result?.result.ok && result.result.commandType === "TranscribeClip") {
       setImportFeedback("Queued clip transcription.");
     }
+  }
+
+  async function handlePreviewSuggestion(suggestion: SmartSuggestionItem): Promise<void> {
+    const targetClipId = suggestion.target.clipId;
+
+    if (targetClipId) {
+      const targetClip = snapshot?.timeline.clipsById[targetClipId] ?? null;
+      setSelectedClipId(targetClipId);
+      setSelectedTrackId(targetClip?.trackId ?? null);
+    }
+
+    await previewController.executeCommand({
+      type: "SeekPreview",
+      positionUs:
+        suggestion.target.startUs +
+        Math.round((suggestion.target.endUs - suggestion.target.startUs) / 2)
+    });
   }
 
   async function handleStartExport(): Promise<void> {
@@ -959,13 +1053,13 @@ export function App() {
         <div className="hero__backdrop" />
         <div className="hero__masthead">
           <div>
-            <p className="eyebrow">Clawcut / Stage 7 OpenClaw integration</p>
-            <h1>Run Clawcut as a local, authenticated media engine for OpenClaw and trusted tools.</h1>
+            <p className="eyebrow">Clawcut / Stage 8 smart editing foundations</p>
+            <h1>Review explainable edit suggestions, preview them, and apply them through the same trusted command engine.</h1>
             <p className="lede">
-              Stage 7 keeps the command, preview, export, transcript, and caption foundations intact
-              while promoting the shared command/query schema to the primary integration contract.
-              The local transport and the OpenClaw plugin adapter both sit on top of that same
-              trusted control layer instead of inventing separate business logic.
+              Stage 8 adds smart analysis without handing control to opaque automation. Silence,
+              filler, weak-segment, and highlight analyzers now produce structured suggestion sets,
+              dry-run edit plans, and explicit apply steps that still route through Clawcut’s
+              command engine, undo history, and OpenClaw-safe control surface.
             </p>
           </div>
 
@@ -1471,6 +1565,94 @@ export function App() {
           setSelectedClipId(clipId);
           setSelectedTrackId(trackId);
         }}
+        snapshot={snapshot}
+      />
+
+      <SmartPanel
+        captionSnapshot={captionSnapshot}
+        onAnalyzeSilence={(clipId) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "AnalyzeSilence",
+              timelineId: snapshot?.timeline.id ?? "",
+              clipId
+            },
+            "Analyzing silence opportunities…"
+          )
+        }
+        onAnalyzeWeakSegments={(transcriptId) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "AnalyzeWeakSegments",
+              transcriptId
+            },
+            "Scoring weak transcript segments…"
+          )
+        }
+        onApplySuggestion={(timelineId, suggestionSetId, suggestionId) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "ApplySuggestion",
+              timelineId,
+              suggestionSetId,
+              suggestionId
+            },
+            "Applying smart suggestion…"
+          )
+        }
+        onApplySuggestionSet={(timelineId, suggestionSetId, suggestionIds) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "ApplySuggestionSet",
+              timelineId,
+              suggestionSetId,
+              suggestionIds
+            },
+            "Applying smart suggestion set…"
+          )
+        }
+        onCompilePlan={(timelineId, suggestionSetId, suggestionIds) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "CompileEditPlan",
+              timelineId,
+              suggestionSetId,
+              suggestionIds
+            },
+            "Compiling smart edit plan…"
+          )
+        }
+        onFindFillerWords={(transcriptId) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "FindFillerWords",
+              transcriptId
+            },
+            "Flagging filler words…"
+          )
+        }
+        onGenerateHighlights={(transcriptId) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "GenerateHighlightSuggestions",
+              transcriptId
+            },
+            "Generating highlight suggestions…"
+          )
+        }
+        onPreviewSuggestion={(suggestion) => void handlePreviewSuggestion(suggestion)}
+        onRejectSuggestion={(suggestionSetId, suggestionId) =>
+          void handleExecuteSmartCommand(
+            {
+              type: "RejectSuggestion",
+              suggestionSetId,
+              suggestionId
+            },
+            "Rejecting suggestion…"
+          )
+        }
+        selectedClipId={selectedClipId}
+        smartSnapshot={smartSnapshot}
         snapshot={snapshot}
       />
 

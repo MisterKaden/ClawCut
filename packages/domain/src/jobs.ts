@@ -1,5 +1,6 @@
 import type { DerivedAssetType } from "./media";
 import type { SubtitleFormat } from "./captions";
+import type { SmartAnalysisType } from "./smart-editing";
 import type {
   ExportMode,
   ExportVerificationResult
@@ -11,6 +12,7 @@ export type JobType =
   | DerivedAssetType
   | "transcription"
   | "export"
+  | "analysis"
   | "preview-cache";
 
 export interface JobProgress {
@@ -71,7 +73,14 @@ export interface TranscriptionJob extends JobBase {
   subtitleFormat: SubtitleFormat | null;
 }
 
-export type Job = IngestJob | DerivedAssetJob | ExportJob | TranscriptionJob;
+export interface SmartAnalysisJob extends JobBase {
+  kind: "analysis";
+  analysisRunId: string;
+  analysisType: SmartAnalysisType;
+  suggestionSetId: string | null;
+}
+
+export type Job = IngestJob | DerivedAssetJob | ExportJob | TranscriptionJob | SmartAnalysisJob;
 
 export type MediaJobStatus = JobState;
 export type MediaJobKind = "ingest" | DerivedAssetType;

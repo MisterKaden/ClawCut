@@ -17,6 +17,9 @@ import type {
   PreviewState,
   ProjectDocumentV3,
   RelinkResult,
+  SmartCommand,
+  SmartCommandResult,
+  SmartSessionSnapshot as DomainSmartSessionSnapshot,
   Timeline
 } from "@clawcut/domain";
 
@@ -98,6 +101,7 @@ export interface EditorSessionSnapshot extends ProjectWorkspaceSnapshot {
 
 export type ExportSessionSnapshot = DomainExportSessionSnapshot;
 export type CaptionSessionSnapshot = DomainCaptionSessionSnapshot;
+export type SmartSessionSnapshot = DomainSmartSessionSnapshot;
 
 export interface CreateProjectInput {
   directory: string;
@@ -197,6 +201,20 @@ export interface ExecuteCaptionCommandResult {
   result: CaptionCommandResult;
 }
 
+export interface GetSmartSessionSnapshotInput {
+  directory: string;
+}
+
+export interface ExecuteSmartCommandInput {
+  directory: string;
+  command: SmartCommand;
+}
+
+export interface ExecuteSmartCommandResult {
+  snapshot: SmartSessionSnapshot;
+  result: SmartCommandResult;
+}
+
 export type LocalApiOperationKind = "command" | "query";
 export type LocalApiSafetyClass = "read-only" | "mutating" | "high-impact";
 export type LocalApiMutabilityClass = "read" | "write";
@@ -244,6 +262,15 @@ export const LOCAL_API_COMMAND_NAMES = [
   "captions.updateSegment",
   "captions.exportSubtitles",
   "captions.setBurnIn",
+  "smart.analyzeSilence",
+  "smart.analyzeWeakSegments",
+  "smart.findFillerWords",
+  "smart.generateHighlights",
+  "smart.compilePlan",
+  "smart.applySuggestion",
+  "smart.applySuggestionSet",
+  "smart.rejectSuggestion",
+  "smart.seekPreviewToSuggestion",
   "export.createRequest",
   "export.compilePlan",
   "export.start",
@@ -267,6 +294,9 @@ export const LOCAL_API_QUERY_NAMES = [
   "transcript.get",
   "captions.session",
   "captions.track",
+  "smart.session",
+  "smart.suggestionSet",
+  "smart.suggestion",
   "jobs.list",
   "jobs.get"
 ] as const;
@@ -346,10 +376,34 @@ export interface LocalApiCaptionTrackGetInput {
   captionTrackId: string;
 }
 
+export interface LocalApiSmartSuggestionSetGetInput {
+  directory: string;
+  suggestionSetId: string;
+}
+
+export interface LocalApiSmartSuggestionGetInput {
+  directory: string;
+  suggestionSetId: string;
+  suggestionId: string;
+}
+
+export interface LocalApiSmartSuggestionPreviewInput extends LocalApiSmartSuggestionGetInput {
+  anchor?: "start" | "midpoint" | "end";
+}
+
+export interface LocalApiSmartSuggestionPreviewResult {
+  suggestionSetId: string;
+  suggestionId: string;
+  positionUs: number;
+  loadedTimeline: boolean;
+  preview: PreviewCommandResult;
+}
+
 type EditorCommandByType<Type extends EditorCommand["type"]> = Extract<EditorCommand, { type: Type }>;
 type PreviewCommandByType<Type extends PreviewCommand["type"]> = Extract<PreviewCommand, { type: Type }>;
 type ExportCommandByType<Type extends ExportCommand["type"]> = Extract<ExportCommand, { type: Type }>;
 type CaptionCommandByType<Type extends CaptionCommand["type"]> = Extract<CaptionCommand, { type: Type }>;
+type SmartCommandByType<Type extends SmartCommand["type"]> = Extract<SmartCommand, { type: Type }>;
 
 type LocalApiEditorOperationInput<Type extends EditorCommand["type"]> = {
   directory: string;
@@ -364,6 +418,9 @@ type LocalApiExportOperationInput<Type extends ExportCommand["type"]> = {
 type LocalApiCaptionOperationInput<Type extends CaptionCommand["type"]> = {
   directory: string;
 } & Omit<CaptionCommandByType<Type>, "type">;
+type LocalApiSmartOperationInput<Type extends SmartCommand["type"]> = {
+  directory: string;
+} & Omit<SmartCommandByType<Type>, "type">;
 
 export interface LocalApiJobCancelInput {
   directory: string;
@@ -405,6 +462,15 @@ export interface LocalApiCommandInputMap {
   "captions.updateSegment": LocalApiCaptionOperationInput<"UpdateCaptionSegment">;
   "captions.exportSubtitles": LocalApiCaptionOperationInput<"ExportSubtitleFile">;
   "captions.setBurnIn": LocalApiCaptionOperationInput<"EnableBurnInCaptionsForExport">;
+  "smart.analyzeSilence": LocalApiSmartOperationInput<"AnalyzeSilence">;
+  "smart.analyzeWeakSegments": LocalApiSmartOperationInput<"AnalyzeWeakSegments">;
+  "smart.findFillerWords": LocalApiSmartOperationInput<"FindFillerWords">;
+  "smart.generateHighlights": LocalApiSmartOperationInput<"GenerateHighlightSuggestions">;
+  "smart.compilePlan": LocalApiSmartOperationInput<"CompileEditPlan">;
+  "smart.applySuggestion": LocalApiSmartOperationInput<"ApplySuggestion">;
+  "smart.applySuggestionSet": LocalApiSmartOperationInput<"ApplySuggestionSet">;
+  "smart.rejectSuggestion": LocalApiSmartOperationInput<"RejectSuggestion">;
+  "smart.seekPreviewToSuggestion": LocalApiSmartSuggestionPreviewInput;
   "export.createRequest": LocalApiExportOperationInput<"CreateExportRequest">;
   "export.compilePlan": LocalApiExportOperationInput<"CompileRenderPlan">;
   "export.start": LocalApiExportOperationInput<"StartExport">;
@@ -455,6 +521,15 @@ export interface LocalApiCommandResultMap {
   "captions.updateSegment": ExecuteCaptionCommandResult;
   "captions.exportSubtitles": ExecuteCaptionCommandResult;
   "captions.setBurnIn": ExecuteCaptionCommandResult;
+  "smart.analyzeSilence": ExecuteSmartCommandResult;
+  "smart.analyzeWeakSegments": ExecuteSmartCommandResult;
+  "smart.findFillerWords": ExecuteSmartCommandResult;
+  "smart.generateHighlights": ExecuteSmartCommandResult;
+  "smart.compilePlan": ExecuteSmartCommandResult;
+  "smart.applySuggestion": ExecuteSmartCommandResult;
+  "smart.applySuggestionSet": ExecuteSmartCommandResult;
+  "smart.rejectSuggestion": ExecuteSmartCommandResult;
+  "smart.seekPreviewToSuggestion": LocalApiSmartSuggestionPreviewResult;
   "export.createRequest": ExecuteExportCommandResult;
   "export.compilePlan": ExecuteExportCommandResult;
   "export.start": ExecuteExportCommandResult;
@@ -479,6 +554,9 @@ export interface LocalApiQueryInputMap {
   "transcript.get": LocalApiTranscriptGetInput;
   "captions.session": GetCaptionSessionSnapshotInput;
   "captions.track": LocalApiCaptionTrackGetInput;
+  "smart.session": GetSmartSessionSnapshotInput;
+  "smart.suggestionSet": LocalApiSmartSuggestionSetGetInput;
+  "smart.suggestion": LocalApiSmartSuggestionGetInput;
   "jobs.list": GetProjectSnapshotInput;
   "jobs.get": LocalApiJobDetailsInput;
 }
@@ -501,6 +579,9 @@ export interface LocalApiQueryResultMap {
   "transcript.get": CaptionCommandResult;
   "captions.session": CaptionSessionSnapshot;
   "captions.track": CaptionCommandResult;
+  "smart.session": SmartSessionSnapshot;
+  "smart.suggestionSet": SmartCommandResult;
+  "smart.suggestion": SmartCommandResult;
   "jobs.list": Job[];
   "jobs.get": LocalApiJobDetails;
 }
@@ -580,6 +661,7 @@ export interface LocalApiCapabilities {
     export: boolean;
     transcript: boolean;
     captions: boolean;
+    smartEditing: boolean;
     jobs: boolean;
     openClawTools: boolean;
     openClawManifest: boolean;
@@ -624,7 +706,7 @@ export interface OpenClawToolManifest {
   tools: OpenClawToolDefinition[];
 }
 
-export type LocalApiEventTopic = "jobs" | "exports" | "transcriptions";
+export type LocalApiEventTopic = "jobs" | "exports" | "transcriptions" | "smart";
 
 export interface LocalApiEventStreamDescriptor {
   transport: "sse";
@@ -702,6 +784,8 @@ export interface ClawcutApi {
   executeExportCommand(input: ExecuteExportCommandInput): Promise<ExecuteExportCommandResult>;
   getCaptionSessionSnapshot(input: GetCaptionSessionSnapshotInput): Promise<CaptionSessionSnapshot>;
   executeCaptionCommand(input: ExecuteCaptionCommandInput): Promise<ExecuteCaptionCommandResult>;
+  getSmartSessionSnapshot(input: GetSmartSessionSnapshotInput): Promise<SmartSessionSnapshot>;
+  executeSmartCommand(input: ExecuteSmartCommandInput): Promise<ExecuteSmartCommandResult>;
   pickImportPaths(input?: PickImportPathsInput): Promise<PickImportPathsResult>;
   importMediaPaths(input: ImportMediaPathsInput): Promise<ImportMediaPathsResult>;
   refreshMediaHealth(input: RefreshMediaHealthInput): Promise<ProjectWorkspaceSnapshot>;
@@ -724,6 +808,8 @@ export const IPC_CHANNELS = {
   executeExportCommand: "clawcut:execute-export-command",
   getCaptionSessionSnapshot: "clawcut:get-caption-session-snapshot",
   executeCaptionCommand: "clawcut:execute-caption-command",
+  getSmartSessionSnapshot: "clawcut:get-smart-session-snapshot",
+  executeSmartCommand: "clawcut:execute-smart-command",
   pickImportPaths: "clawcut:pick-import-paths",
   importMediaPaths: "clawcut:import-media-paths",
   refreshMediaHealth: "clawcut:refresh-media-health",

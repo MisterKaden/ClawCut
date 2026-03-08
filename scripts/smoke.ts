@@ -262,8 +262,8 @@ async function runSmoke(): Promise<void> {
   const appRoot = resolve(workspaceRoot, "apps/desktop");
   const electronBinary = require("electron") as string;
   const mainEntry = resolve(appRoot, "out/main/index.js");
-  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage6-smoke-project-"));
-  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage6-smoke-import-"));
+  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage8-smoke-project-"));
+  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage8-smoke-import-"));
   const originalPath = join(importDirectory, "talking-head-sample.mp4");
   const screenshotDirectory = resolve(workspaceRoot, "output/playwright");
 
@@ -286,10 +286,10 @@ async function runSmoke(): Promise<void> {
     const page = await electronApp.firstWindow();
 
     await page.getByTestId("project-directory-input").fill(projectDirectory);
-    await page.getByTestId("project-name-input").fill("Stage 7 Smoke");
+    await page.getByTestId("project-name-input").fill("Stage 8 Smoke");
     await page.getByTestId("create-project-button").click();
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 7 Smoke") === true,
+      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 8 Smoke") === true,
       undefined,
       {
         timeout: 10_000
@@ -298,7 +298,7 @@ async function runSmoke(): Promise<void> {
 
     const projectHeading = await page.getByTestId("workspace-header").textContent();
 
-    if (!projectHeading?.includes("Stage 7 Smoke")) {
+    if (!projectHeading?.includes("Stage 8 Smoke")) {
       throw new Error(`Smoke project was not opened. Header text: ${projectHeading ?? "missing"}`);
     }
 
@@ -306,9 +306,14 @@ async function runSmoke(): Promise<void> {
     const openClawClient = new ClawcutOpenClawClient({
       baseUrl: localApi.baseUrl,
       token: localApi.token,
-      enabledMutatingTools: ["clawcut.generate_captions"],
+      enabledMutatingTools: [
+        "clawcut.generate_captions",
+        "clawcut.reject_suggestion",
+        "clawcut.seek_preview_to_suggestion"
+      ],
       enabledHighImpactTools: [
         "clawcut.transcribe_clip",
+        "clawcut.apply_suggestion",
         "clawcut.export_subtitles",
         "clawcut.start_export"
       ]
@@ -368,7 +373,7 @@ async function runSmoke(): Promise<void> {
       !capabilities.body.data.features.openClawTools ||
       !capabilities.body.data.features.openClawPlugin
     ) {
-      throw new Error("Local API capabilities did not describe the Stage 7 control surface.");
+      throw new Error("Local API capabilities did not describe the Stage 8 control surface.");
     }
 
     if (
@@ -713,16 +718,45 @@ async function runSmoke(): Promise<void> {
         data: timelineSessionViaTool.response.ok ? timelineSessionViaTool.response.data : null
       }
     };
+    const timelineDetailsBeforeTranscription = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        timeline: {
+          clipsById: Record<string, { sourceInUs: number; sourceOutUs: number }>;
+        };
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.get",
+        input: {
+          directory: projectDirectory
+        }
+      }
+    });
+
+    if (!timelineDetailsBeforeTranscription.body.ok) {
+      throw new Error("The Stage 8 API smoke could not inspect timeline clip durations.");
+    }
 
     const videoTrackId = timelineSessionViaApi.body.data.timeline.trackOrder.find((trackId) => {
       return timelineSessionViaApi.body.data.timeline.tracksById[trackId]?.kind === "video";
     });
     const videoClipId = videoTrackId
-      ? timelineSessionViaApi.body.data.timeline.tracksById[videoTrackId]?.clipIds[0]
+      ? [...timelineSessionViaApi.body.data.timeline.tracksById[videoTrackId].clipIds].sort(
+          (left, right) => {
+            const leftClip = timelineDetailsBeforeTranscription.body.data.timeline.clipsById[left];
+            const rightClip = timelineDetailsBeforeTranscription.body.data.timeline.clipsById[right];
+            const leftDuration = leftClip ? leftClip.sourceOutUs - leftClip.sourceInUs : 0;
+            const rightDuration = rightClip ? rightClip.sourceOutUs - rightClip.sourceInUs : 0;
+            return rightDuration - leftDuration;
+          }
+        )[0]
       : null;
 
     if (!videoTrackId || !videoClipId) {
-      throw new Error("The Stage 7 API smoke could not resolve a video clip for transcription.");
+      throw new Error("The Stage 8 API smoke could not resolve a video clip for transcription.");
     }
 
     const transcribeViaTool = await openClawClient.invokeTool<{
@@ -846,6 +880,361 @@ async function runSmoke(): Promise<void> {
       )
     ) {
       throw new Error("Transcription glossary terms were not preserved on the run request.");
+    }
+
+    const timelineBeforeSmart = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        timeline: {
+          trackOrder: string[];
+          tracksById: Record<string, { clipIds: string[] }>;
+          clipsById: Record<string, { timelineStartUs: number; sourceInUs: number; sourceOutUs: number }>;
+        };
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.get",
+        input: {
+          directory: projectDirectory
+        }
+      }
+    });
+
+    if (!timelineBeforeSmart.body.ok) {
+      throw new Error("Could not query the timeline before smart analysis.");
+    }
+
+    const timelineEndBeforeSmart = Object.values(timelineBeforeSmart.body.data.timeline.clipsById).reduce(
+      (max, clip) =>
+        Math.max(max, clip.timelineStartUs + (clip.sourceOutUs - clip.sourceInUs)),
+      0
+    );
+
+    const silenceAnalysis = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        suggestionSet: {
+          id: string;
+          items: Array<{
+            id: string;
+            target: { startUs: number; endUs: number };
+          }>;
+        };
+      };
+    }>("clawcut.analyze_silence", {
+      directory: projectDirectory,
+      timelineId: timelineSessionViaApi.body.data.timeline.id,
+      clipId: videoClipId,
+      options: {
+        amplitudeThreshold: 0.05,
+        peakThreshold: 0.09,
+        minimumDurationUs: 180_000
+      }
+    });
+
+    if (
+      !silenceAnalysis.response.ok ||
+      !silenceAnalysis.response.data.result.ok ||
+      silenceAnalysis.response.data.result.commandType !== "AnalyzeSilence"
+    ) {
+      throw new Error("Silence analysis did not complete successfully.");
+    }
+
+    const fillerAnalysis = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        suggestionSet: {
+          id: string;
+          items: Array<{
+            id: string;
+            target: { startUs: number; endUs: number };
+          }>;
+        };
+      };
+    }>("clawcut.find_filler_words", {
+      directory: projectDirectory,
+      transcriptId: completedTranscription.transcriptId,
+      options: {
+        vocabulary: ["Clawcut"],
+        paddingUs: 30_000
+      }
+    });
+
+    if (
+      !fillerAnalysis.response.ok ||
+      !fillerAnalysis.response.data.result.ok ||
+      fillerAnalysis.response.data.result.commandType !== "FindFillerWords" ||
+      !fillerAnalysis.response.data.result.suggestionSet.items.length
+    ) {
+      throw new Error("Filler-word analysis did not produce a reviewable suggestion set.");
+    }
+
+    const reviewSuggestionSet = silenceAnalysis.response.data.result.suggestionSet.items.length
+      ? silenceAnalysis.response.data.result.suggestionSet
+      : fillerAnalysis.response.data.result.suggestionSet;
+    const reviewSuggestion = reviewSuggestionSet.items[0];
+
+    const inspectedSuggestion = await openClawClient.invokeTool<{
+      ok: boolean;
+      commandType: string;
+      suggestion: {
+        id: string;
+        target: { startUs: number; endUs: number };
+      };
+    }>("clawcut.preview_suggestion", {
+      directory: projectDirectory,
+      suggestionSetId: reviewSuggestionSet.id,
+      suggestionId: reviewSuggestion.id
+    });
+
+    if (
+      !inspectedSuggestion.response.ok ||
+      !inspectedSuggestion.response.data.ok ||
+      inspectedSuggestion.response.data.commandType !== "InspectSuggestion"
+    ) {
+      throw new Error("Suggestion inspection through the OpenClaw boundary failed.");
+    }
+
+    const suggestionMidpointUs =
+      inspectedSuggestion.response.data.suggestion.target.startUs +
+      Math.round(
+        (inspectedSuggestion.response.data.suggestion.target.endUs -
+          inspectedSuggestion.response.data.suggestion.target.startUs) / 2
+      );
+
+    const previewSuggestionSeek = await openClawClient.invokeTool<{
+      suggestionSetId: string;
+      suggestionId: string;
+      positionUs: number;
+      loadedTimeline: boolean;
+      preview: { ok: boolean; commandType: string };
+    }>("clawcut.seek_preview_to_suggestion", {
+      directory: projectDirectory,
+      suggestionSetId: reviewSuggestionSet.id,
+      suggestionId: reviewSuggestion.id,
+      anchor: "midpoint"
+    });
+
+    if (
+      !previewSuggestionSeek.response.ok ||
+      previewSuggestionSeek.response.data.suggestionId !== reviewSuggestion.id ||
+      previewSuggestionSeek.response.data.positionUs !== suggestionMidpointUs ||
+      previewSuggestionSeek.response.data.preview.commandType !== "SeekPreview"
+    ) {
+      throw new Error("Could not seek the preview to the smart suggestion range.");
+    }
+
+    const silencePlan = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        plan: { id: string; steps: Array<{ id: string }> };
+      };
+    }>("clawcut.compile_edit_plan", {
+      directory: projectDirectory,
+      timelineId: timelineSessionViaApi.body.data.timeline.id,
+      suggestionSetId: reviewSuggestionSet.id,
+      suggestionIds: [reviewSuggestion.id]
+    });
+
+    if (
+      !silencePlan.response.ok ||
+      !silencePlan.response.data.result.ok ||
+      silencePlan.response.data.result.commandType !== "CompileEditPlan" ||
+      !silencePlan.response.data.result.plan.steps.length
+    ) {
+      throw new Error("Smart edit plan compilation did not produce an inspectable dry run.");
+    }
+
+    const appliedSuggestion = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        appliedSuggestionIds: string[];
+      };
+    }>("clawcut.apply_suggestion", {
+      directory: projectDirectory,
+      timelineId: timelineSessionViaApi.body.data.timeline.id,
+      suggestionSetId: reviewSuggestionSet.id,
+      suggestionId: reviewSuggestion.id
+    });
+
+    if (
+      !appliedSuggestion.response.ok ||
+      !appliedSuggestion.response.data.result.ok ||
+      appliedSuggestion.response.data.result.commandType !== "ApplySuggestion"
+    ) {
+      throw new Error("Applying a reviewed smart suggestion failed.");
+    }
+
+    const highlightAnalysis = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        suggestionSet: {
+          id: string;
+          items: Array<{ id: string }>;
+        };
+      };
+    }>("clawcut.generate_highlight_suggestions", {
+      directory: projectDirectory,
+      transcriptId: completedTranscription.transcriptId
+    });
+
+    if (
+      !highlightAnalysis.response.ok ||
+      !highlightAnalysis.response.data.result.ok ||
+      highlightAnalysis.response.data.result.commandType !== "GenerateHighlightSuggestions" ||
+      !highlightAnalysis.response.data.result.suggestionSet.items.length
+    ) {
+      throw new Error("Highlight analysis did not produce a suggestion set.");
+    }
+
+    const rejectedSuggestion = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        suggestionId: string;
+      };
+    }>("clawcut.reject_suggestion", {
+      directory: projectDirectory,
+      suggestionSetId: highlightAnalysis.response.data.result.suggestionSet.id,
+      suggestionId: highlightAnalysis.response.data.result.suggestionSet.items[0].id
+    });
+
+    if (
+      !rejectedSuggestion.response.ok ||
+      !rejectedSuggestion.response.data.result.ok ||
+      rejectedSuggestion.response.data.result.commandType !== "RejectSuggestion"
+    ) {
+      throw new Error("Rejecting a smart suggestion did not update review state.");
+    }
+
+    const smartSessionViaApi = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        suggestionSets: Array<{
+          id: string;
+          items: Array<{ id: string; status: string }>;
+        }>;
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "smart.session",
+        input: {
+          directory: projectDirectory
+        }
+      }
+    });
+
+    if (!smartSessionViaApi.body.ok) {
+      throw new Error("The smart session was not queryable through the local API.");
+    }
+
+    const rejectedSet = smartSessionViaApi.body.data.suggestionSets.find(
+      (set) => set.id === highlightAnalysis.response.data.result.suggestionSet.id
+    );
+
+    if (
+      !rejectedSet?.items.some(
+        (item) =>
+          item.id === highlightAnalysis.response.data.result.suggestionSet.items[0].id &&
+          item.status === "rejected"
+      )
+    ) {
+      throw new Error("Rejected smart suggestions were not persisted in the smart session.");
+    }
+
+    const timelineAfterSmartApply = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        timeline: {
+          clipsById: Record<string, { timelineStartUs: number; sourceInUs: number; sourceOutUs: number }>;
+        };
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.get",
+        input: {
+          directory: projectDirectory
+        }
+      }
+    });
+
+    if (!timelineAfterSmartApply.body.ok) {
+      throw new Error("Could not query the timeline after applying a smart suggestion.");
+    }
+
+    const timelineEndAfterSmartApply = Object.values(
+      timelineAfterSmartApply.body.data.timeline.clipsById
+    ).reduce(
+      (max, clip) => Math.max(max, clip.timelineStartUs + (clip.sourceOutUs - clip.sourceInUs)),
+      0
+    );
+
+    if (timelineEndAfterSmartApply >= timelineEndBeforeSmart) {
+      throw new Error("Applying a smart suggestion did not shorten the timeline as expected.");
+    }
+
+    const undoSmartApply = await requestLocalApi<{ ok: boolean }>(localApi, "/api/v1/command", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.undo",
+        input: {
+          directory: projectDirectory,
+          timelineId: timelineSessionViaApi.body.data.timeline.id
+        }
+      }
+    });
+
+    if (!undoSmartApply.body.ok) {
+      throw new Error("Undo after smart suggestion application failed.");
+    }
+
+    const timelineAfterUndo = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        timeline: {
+          clipsById: Record<string, { timelineStartUs: number; sourceInUs: number; sourceOutUs: number }>;
+        };
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.get",
+        input: {
+          directory: projectDirectory
+        }
+      }
+    });
+
+    if (!timelineAfterUndo.body.ok) {
+      throw new Error("Could not query the timeline after undoing a smart edit.");
+    }
+
+    const timelineEndAfterUndo = Object.values(timelineAfterUndo.body.data.timeline.clipsById).reduce(
+      (max, clip) => Math.max(max, clip.timelineStartUs + (clip.sourceOutUs - clip.sourceInUs)),
+      0
+    );
+
+    if (timelineEndAfterUndo !== timelineEndBeforeSmart) {
+      throw new Error("Undo did not restore the timeline after applying a smart suggestion.");
     }
 
     const previewLoadViaApi = await requestLocalApi<{ ok: boolean }>(localApi, "/api/v1/command", {
@@ -1157,7 +1546,7 @@ async function runSmoke(): Promise<void> {
     );
 
     await page.screenshot({
-      path: resolve(screenshotDirectory, "clawcut-stage7-smoke.png"),
+      path: resolve(screenshotDirectory, "clawcut-stage8-smoke.png"),
       fullPage: true
     });
   } finally {

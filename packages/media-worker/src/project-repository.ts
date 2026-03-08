@@ -33,6 +33,7 @@ import type {
   PersistedDerivedJobPayload,
   PersistedIngestJobPayload,
   PersistedJobPayload,
+  PersistedSmartAnalysisJobPayload,
   PersistedTranscriptionJobPayload,
   StoredJobRecord
 } from "./job-payloads";
@@ -140,7 +141,7 @@ function rowToMediaJob(row: {
   id: string;
   project_directory: string;
   media_item_id: string | null;
-  kind: "ingest" | DerivedAssetType | "export" | "transcription";
+  kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
   status: JobState;
   progress: number;
   step: string;
@@ -213,6 +214,27 @@ function rowToMediaJob(row: {
     };
   }
 
+  if (row.kind === "analysis") {
+    const payload = JSON.parse(row.payload_json) as PersistedSmartAnalysisJobPayload;
+
+    return {
+      id: row.id,
+      kind: "analysis",
+      projectDirectory: row.project_directory,
+      mediaItemId: row.media_item_id,
+      progress: row.progress,
+      step: row.step,
+      status: row.status,
+      attemptCount: row.attempt_count,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      errorMessage: row.error_message,
+      analysisRunId: payload.analysisRunId,
+      analysisType: payload.analysisType,
+      suggestionSetId: payload.suggestionSetId
+    };
+  }
+
   return {
     id: row.id,
     kind: row.kind,
@@ -256,7 +278,7 @@ export function listJobs(databasePath: string): Job[] {
       id: string;
       project_directory: string;
       media_item_id: string | null;
-      kind: "ingest" | DerivedAssetType | "export" | "transcription";
+      kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
       status: JobState;
       progress: number;
       step: string;
@@ -300,7 +322,7 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
           id: string;
           project_directory: string;
           media_item_id: string | null;
-          kind: "ingest" | DerivedAssetType | "export" | "transcription";
+          kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
           status: JobState;
           progress: number;
           step: string;
@@ -338,7 +360,7 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
 export function createJobRecord(
   databasePath: string,
   input: {
-    kind: "ingest" | DerivedAssetType | "export" | "transcription";
+    kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
     projectDirectory: string;
     mediaItemId?: string | null;
     payload: PersistedJobPayload;

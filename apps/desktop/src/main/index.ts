@@ -62,6 +62,12 @@ async function bootstrap(): Promise<void> {
     async executeCaptionCommand(input) {
       return mediaWorkerHost.executeCaptionCommand(input);
     },
+    async getSmartSessionSnapshot(input) {
+      return mediaWorkerHost.getSmartSessionSnapshot(input);
+    },
+    async executeSmartCommand(input) {
+      return mediaWorkerHost.executeSmartCommand(input);
+    },
     async pickImportPaths() {
       throw new Error("pickImportPaths is handled by the Electron IPC layer.");
     },

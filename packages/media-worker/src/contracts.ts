@@ -7,12 +7,15 @@ import type {
   ExecuteExportCommandResult,
   ExecuteEditorCommandInput,
   ExecuteEditorCommandResult,
+  ExecuteSmartCommandInput,
+  ExecuteSmartCommandResult,
   ExportSessionSnapshot,
   EditorSessionSnapshot,
   GetCaptionSessionSnapshotInput,
   GetProjectSnapshotInput,
   GetEditorSessionSnapshotInput,
   GetExportSessionSnapshotInput,
+  GetSmartSessionSnapshotInput,
   ImportMediaPathsInput,
   MediaProbeResult,
   OpenProjectInput,
@@ -25,6 +28,7 @@ import type {
   RelinkMediaItemResult,
   RetryJobInput,
   SerializedWorkerError,
+  SmartSessionSnapshot,
   ToolchainStatus
 } from "@clawcut/ipc";
 
@@ -68,6 +72,14 @@ export interface WorkerMethodMap {
   executeCaptionCommand: {
     request: ExecuteCaptionCommandInput;
     response: ExecuteCaptionCommandResult;
+  };
+  getSmartSessionSnapshot: {
+    request: GetSmartSessionSnapshotInput;
+    response: SmartSessionSnapshot;
+  };
+  executeSmartCommand: {
+    request: ExecuteSmartCommandInput;
+    response: ExecuteSmartCommandResult;
   };
   pickImportPaths: {
     request: PickImportPathsInput | null;

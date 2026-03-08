@@ -3,6 +3,7 @@ import type {
   Timeline,
   TimelineClip,
   TimelineMarker,
+  TimelineRegion,
   TimelineStreamType,
   TimelineTrackKind
 } from "./timeline";
@@ -17,10 +18,12 @@ export type EditorCommandType =
   | "TrimClipEnd"
   | "MoveClip"
   | "RippleDeleteClip"
+  | "RippleDeleteRange"
   | "LockTrack"
   | "UnlockTrack"
   | "AddMarker"
   | "RemoveMarker"
+  | "AddRegion"
   | "SetPlayhead"
   | "Undo"
   | "Redo";
@@ -31,6 +34,7 @@ export type EditorCommandErrorCode =
   | "TRACK_NOT_FOUND"
   | "CLIP_NOT_FOUND"
   | "MARKER_NOT_FOUND"
+  | "REGION_NOT_FOUND"
   | "MEDIA_ITEM_NOT_FOUND"
   | "TRACK_KIND_MISMATCH"
   | "TRACK_LOCKED"
@@ -123,6 +127,13 @@ export interface RippleDeleteClipCommand extends EditableTimelineCommand {
   clipId: string;
 }
 
+export interface RippleDeleteRangeCommand extends EditableTimelineCommand {
+  type: "RippleDeleteRange";
+  startUs: number;
+  endUs: number;
+  trackIds?: string[];
+}
+
 export interface LockTrackCommand extends TimelineCommandBase {
   type: "LockTrack";
   trackId: string;
@@ -143,6 +154,14 @@ export interface AddMarkerCommand extends TimelineCommandBase, SnapCommand {
 export interface RemoveMarkerCommand extends TimelineCommandBase {
   type: "RemoveMarker";
   markerId: string;
+}
+
+export interface AddRegionCommand extends TimelineCommandBase, SnapCommand {
+  type: "AddRegion";
+  regionId?: string;
+  startUs: number;
+  endUs: number;
+  label: string;
 }
 
 export interface SetPlayheadCommand extends TimelineCommandBase, SnapCommand {
@@ -168,10 +187,12 @@ export type EditorCommand =
   | TrimClipEndCommand
   | MoveClipCommand
   | RippleDeleteClipCommand
+  | RippleDeleteRangeCommand
   | LockTrackCommand
   | UnlockTrackCommand
   | AddMarkerCommand
   | RemoveMarkerCommand
+  | AddRegionCommand
   | SetPlayheadCommand
   | UndoCommand
   | RedoCommand;
@@ -240,6 +261,16 @@ export interface RippleDeleteClipResult
   shiftByUs: number;
 }
 
+export interface RippleDeleteRangeResult
+  extends EditorCommandSuccessBase<"RippleDeleteRange"> {
+  deletedClipIds: string[];
+  createdClipIds: string[];
+  shiftedClipIds: string[];
+  shiftByUs: number;
+  startUs: number;
+  endUs: number;
+}
+
 interface TrackLockResultFields {
   trackId: string;
 }
@@ -255,6 +286,10 @@ export interface AddMarkerResult extends EditorCommandSuccessBase<"AddMarker"> {
 
 export interface RemoveMarkerResult extends EditorCommandSuccessBase<"RemoveMarker"> {
   markerId: string;
+}
+
+export interface AddRegionResult extends EditorCommandSuccessBase<"AddRegion"> {
+  region: TimelineRegion;
 }
 
 export interface SetPlayheadResult extends EditorCommandSuccessBase<"SetPlayhead"> {
@@ -275,10 +310,12 @@ export type EditorCommandSuccess =
   | TrimClipEndResult
   | MoveClipResult
   | RippleDeleteClipResult
+  | RippleDeleteRangeResult
   | LockTrackResult
   | UnlockTrackResult
   | AddMarkerResult
   | RemoveMarkerResult
+  | AddRegionResult
   | SetPlayheadResult
   | HistoryCommandResult;
 

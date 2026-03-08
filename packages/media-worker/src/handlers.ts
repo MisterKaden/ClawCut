@@ -6,13 +6,15 @@ import type {
   GetExportSessionSnapshotInput,
   GetEditorSessionSnapshotInput,
   GetCaptionSessionSnapshotInput,
+  GetSmartSessionSnapshotInput,
   GetProjectSnapshotInput,
   ImportMediaPathsInput,
   OpenProjectInput,
   ProbeAssetInput,
   RefreshMediaHealthInput,
   RelinkMediaItemInput,
-  RetryJobInput
+  RetryJobInput,
+  ExecuteSmartCommandInput
 } from "@clawcut/ipc";
 
 import {
@@ -40,6 +42,10 @@ import {
   refreshMediaHealth
 } from "./project-repository";
 import { probeAsset } from "./probe";
+import {
+  executeSmartCommand,
+  getSmartSessionSnapshot
+} from "./smart-session";
 import { detectToolchain } from "./toolchain";
 
 export async function handleDetectToolchain() {
@@ -88,6 +94,16 @@ export async function handleGetCaptionSessionSnapshot(
 
 export async function handleExecuteCaptionCommand(input: ExecuteCaptionCommandInput) {
   return executeCaptionCommand(input);
+}
+
+export async function handleGetSmartSessionSnapshot(
+  input: GetSmartSessionSnapshotInput
+) {
+  return getSmartSessionSnapshot(input);
+}
+
+export async function handleExecuteSmartCommand(input: ExecuteSmartCommandInput) {
+  return executeSmartCommand(input);
 }
 
 export async function handleImportMediaPaths(input: ImportMediaPathsInput) {

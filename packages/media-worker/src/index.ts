@@ -3,6 +3,7 @@ export * from "./editor-session";
 export * from "./export-session";
 export * from "./host";
 export * from "./probe";
+export * from "./smart-session";
 export * from "./toolchain";
 export * from "./transcription-adapter";
 export * from "./types";
