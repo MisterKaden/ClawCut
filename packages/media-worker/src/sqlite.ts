@@ -132,8 +132,89 @@ function applyMigrations(database: Database.Database): void {
       applied_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      project_directory TEXT NOT NULL,
+      template_id TEXT NOT NULL,
+      template_version INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      safety_profile_json TEXT NOT NULL,
+      warnings_json TEXT NOT NULL,
+      error_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_step_runs (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      batch_item_run_id TEXT,
+      definition_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      safety_class TEXT NOT NULL,
+      mutability TEXT NOT NULL,
+      execution TEXT NOT NULL,
+      requires_approval INTEGER NOT NULL,
+      child_job_id TEXT,
+      warnings_json TEXT NOT NULL,
+      output_summary_json TEXT NOT NULL,
+      error_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_batch_items (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      target_clip_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      status TEXT NOT NULL,
+      warnings_json TEXT NOT NULL,
+      output_summary_json TEXT NOT NULL,
+      error_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_approvals (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      step_run_id TEXT NOT NULL,
+      batch_item_run_id TEXT,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      proposed_effects_json TEXT NOT NULL,
+      artifact_ids_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_artifacts (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      step_run_id TEXT,
+      batch_item_run_id TEXT,
+      kind TEXT NOT NULL,
+      label TEXT NOT NULL,
+      path TEXT,
+      metadata_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     INSERT INTO schema_metadata (key, value)
-    VALUES ('schema_version', '5')
+    VALUES ('schema_version', '6')
     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
   `);
 }

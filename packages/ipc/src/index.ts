@@ -1,4 +1,5 @@
 import type {
+  BrandKit,
   CaptionCommand,
   CaptionCommandResult,
   CaptionSessionSnapshot as DomainCaptionSessionSnapshot,
@@ -20,7 +21,14 @@ import type {
   SmartCommand,
   SmartCommandResult,
   SmartSessionSnapshot as DomainSmartSessionSnapshot,
-  Timeline
+  Timeline,
+  WorkflowApproval,
+  WorkflowArtifact,
+  WorkflowCommand,
+  WorkflowCommandResult,
+  WorkflowRun,
+  WorkflowSessionSnapshot as DomainWorkflowSessionSnapshot,
+  WorkflowTemplate
 } from "@clawcut/domain";
 
 export type ToolName = "ffmpeg" | "ffprobe" | "transcription";
@@ -102,6 +110,7 @@ export interface EditorSessionSnapshot extends ProjectWorkspaceSnapshot {
 export type ExportSessionSnapshot = DomainExportSessionSnapshot;
 export type CaptionSessionSnapshot = DomainCaptionSessionSnapshot;
 export type SmartSessionSnapshot = DomainSmartSessionSnapshot;
+export type WorkflowSessionSnapshot = DomainWorkflowSessionSnapshot;
 
 export interface CreateProjectInput {
   directory: string;
@@ -215,6 +224,20 @@ export interface ExecuteSmartCommandResult {
   result: SmartCommandResult;
 }
 
+export interface GetWorkflowSessionSnapshotInput {
+  directory: string;
+}
+
+export interface ExecuteWorkflowCommandInput {
+  directory: string;
+  command: WorkflowCommand;
+}
+
+export interface ExecuteWorkflowCommandResult {
+  snapshot: WorkflowSessionSnapshot;
+  result: WorkflowCommandResult;
+}
+
 export type LocalApiOperationKind = "command" | "query";
 export type LocalApiSafetyClass = "read-only" | "mutating" | "high-impact";
 export type LocalApiMutabilityClass = "read" | "write";
@@ -271,6 +294,16 @@ export const LOCAL_API_COMMAND_NAMES = [
   "smart.applySuggestionSet",
   "smart.rejectSuggestion",
   "smart.seekPreviewToSuggestion",
+  "workflow.start",
+  "workflow.startBatch",
+  "workflow.cancelRun",
+  "workflow.resumeRun",
+  "workflow.retryStep",
+  "workflow.approveStep",
+  "workflow.rejectStep",
+  "brandKits.create",
+  "brandKits.update",
+  "brandKits.setDefault",
   "export.createRequest",
   "export.compilePlan",
   "export.start",
@@ -297,6 +330,15 @@ export const LOCAL_API_QUERY_NAMES = [
   "smart.session",
   "smart.suggestionSet",
   "smart.suggestion",
+  "workflow.session",
+  "workflow.list",
+  "workflow.inspect",
+  "workflow.runs",
+  "workflow.run",
+  "workflow.approvals",
+  "workflow.artifacts",
+  "workflow.artifact",
+  "brandKits.list",
   "jobs.list",
   "jobs.get"
 ] as const;
@@ -376,6 +418,22 @@ export interface LocalApiCaptionTrackGetInput {
   captionTrackId: string;
 }
 
+export interface LocalApiWorkflowTemplateGetInput {
+  directory: string;
+  workflowId: string;
+}
+
+export interface LocalApiWorkflowRunGetInput {
+  directory: string;
+  workflowRunId: string;
+}
+
+export interface LocalApiWorkflowArtifactGetInput {
+  directory: string;
+  workflowRunId: string;
+  artifactId: string;
+}
+
 export interface LocalApiSmartSuggestionSetGetInput {
   directory: string;
   suggestionSetId: string;
@@ -404,6 +462,10 @@ type PreviewCommandByType<Type extends PreviewCommand["type"]> = Extract<Preview
 type ExportCommandByType<Type extends ExportCommand["type"]> = Extract<ExportCommand, { type: Type }>;
 type CaptionCommandByType<Type extends CaptionCommand["type"]> = Extract<CaptionCommand, { type: Type }>;
 type SmartCommandByType<Type extends SmartCommand["type"]> = Extract<SmartCommand, { type: Type }>;
+type WorkflowCommandByType<Type extends WorkflowCommand["type"]> = Extract<
+  WorkflowCommand,
+  { type: Type }
+>;
 
 type LocalApiEditorOperationInput<Type extends EditorCommand["type"]> = {
   directory: string;
@@ -421,6 +483,9 @@ type LocalApiCaptionOperationInput<Type extends CaptionCommand["type"]> = {
 type LocalApiSmartOperationInput<Type extends SmartCommand["type"]> = {
   directory: string;
 } & Omit<SmartCommandByType<Type>, "type">;
+type LocalApiWorkflowOperationInput<Type extends WorkflowCommand["type"]> = {
+  directory: string;
+} & Omit<WorkflowCommandByType<Type>, "type">;
 
 export interface LocalApiJobCancelInput {
   directory: string;
@@ -471,6 +536,16 @@ export interface LocalApiCommandInputMap {
   "smart.applySuggestionSet": LocalApiSmartOperationInput<"ApplySuggestionSet">;
   "smart.rejectSuggestion": LocalApiSmartOperationInput<"RejectSuggestion">;
   "smart.seekPreviewToSuggestion": LocalApiSmartSuggestionPreviewInput;
+  "workflow.start": LocalApiWorkflowOperationInput<"StartWorkflow">;
+  "workflow.startBatch": LocalApiWorkflowOperationInput<"StartBatchWorkflow">;
+  "workflow.cancelRun": LocalApiWorkflowOperationInput<"CancelWorkflowRun">;
+  "workflow.resumeRun": LocalApiWorkflowOperationInput<"ResumeWorkflowRun">;
+  "workflow.retryStep": LocalApiWorkflowOperationInput<"RetryWorkflowStep">;
+  "workflow.approveStep": LocalApiWorkflowOperationInput<"ApproveWorkflowStep">;
+  "workflow.rejectStep": LocalApiWorkflowOperationInput<"RejectWorkflowStep">;
+  "brandKits.create": LocalApiWorkflowOperationInput<"CreateBrandKit">;
+  "brandKits.update": LocalApiWorkflowOperationInput<"UpdateBrandKit">;
+  "brandKits.setDefault": LocalApiWorkflowOperationInput<"SetDefaultBrandKit">;
   "export.createRequest": LocalApiExportOperationInput<"CreateExportRequest">;
   "export.compilePlan": LocalApiExportOperationInput<"CompileRenderPlan">;
   "export.start": LocalApiExportOperationInput<"StartExport">;
@@ -530,6 +605,16 @@ export interface LocalApiCommandResultMap {
   "smart.applySuggestionSet": ExecuteSmartCommandResult;
   "smart.rejectSuggestion": ExecuteSmartCommandResult;
   "smart.seekPreviewToSuggestion": LocalApiSmartSuggestionPreviewResult;
+  "workflow.start": ExecuteWorkflowCommandResult;
+  "workflow.startBatch": ExecuteWorkflowCommandResult;
+  "workflow.cancelRun": ExecuteWorkflowCommandResult;
+  "workflow.resumeRun": ExecuteWorkflowCommandResult;
+  "workflow.retryStep": ExecuteWorkflowCommandResult;
+  "workflow.approveStep": ExecuteWorkflowCommandResult;
+  "workflow.rejectStep": ExecuteWorkflowCommandResult;
+  "brandKits.create": ExecuteWorkflowCommandResult;
+  "brandKits.update": ExecuteWorkflowCommandResult;
+  "brandKits.setDefault": ExecuteWorkflowCommandResult;
   "export.createRequest": ExecuteExportCommandResult;
   "export.compilePlan": ExecuteExportCommandResult;
   "export.start": ExecuteExportCommandResult;
@@ -557,6 +642,15 @@ export interface LocalApiQueryInputMap {
   "smart.session": GetSmartSessionSnapshotInput;
   "smart.suggestionSet": LocalApiSmartSuggestionSetGetInput;
   "smart.suggestion": LocalApiSmartSuggestionGetInput;
+  "workflow.session": GetWorkflowSessionSnapshotInput;
+  "workflow.list": GetWorkflowSessionSnapshotInput;
+  "workflow.inspect": LocalApiWorkflowTemplateGetInput;
+  "workflow.runs": GetWorkflowSessionSnapshotInput;
+  "workflow.run": LocalApiWorkflowRunGetInput;
+  "workflow.approvals": GetWorkflowSessionSnapshotInput;
+  "workflow.artifacts": LocalApiWorkflowRunGetInput;
+  "workflow.artifact": LocalApiWorkflowArtifactGetInput;
+  "brandKits.list": GetWorkflowSessionSnapshotInput;
   "jobs.list": GetProjectSnapshotInput;
   "jobs.get": LocalApiJobDetailsInput;
 }
@@ -582,6 +676,15 @@ export interface LocalApiQueryResultMap {
   "smart.session": SmartSessionSnapshot;
   "smart.suggestionSet": SmartCommandResult;
   "smart.suggestion": SmartCommandResult;
+  "workflow.session": WorkflowSessionSnapshot;
+  "workflow.list": WorkflowTemplate[];
+  "workflow.inspect": WorkflowTemplate | null;
+  "workflow.runs": WorkflowRun[];
+  "workflow.run": WorkflowRun | null;
+  "workflow.approvals": WorkflowApproval[];
+  "workflow.artifacts": WorkflowArtifact[];
+  "workflow.artifact": WorkflowArtifact | null;
+  "brandKits.list": BrandKit[];
   "jobs.list": Job[];
   "jobs.get": LocalApiJobDetails;
 }
@@ -662,6 +765,8 @@ export interface LocalApiCapabilities {
     transcript: boolean;
     captions: boolean;
     smartEditing: boolean;
+    workflows: boolean;
+    brandKits: boolean;
     jobs: boolean;
     openClawTools: boolean;
     openClawManifest: boolean;
@@ -706,7 +811,7 @@ export interface OpenClawToolManifest {
   tools: OpenClawToolDefinition[];
 }
 
-export type LocalApiEventTopic = "jobs" | "exports" | "transcriptions" | "smart";
+export type LocalApiEventTopic = "jobs" | "exports" | "transcriptions" | "smart" | "workflows";
 
 export interface LocalApiEventStreamDescriptor {
   transport: "sse";
@@ -786,6 +891,12 @@ export interface ClawcutApi {
   executeCaptionCommand(input: ExecuteCaptionCommandInput): Promise<ExecuteCaptionCommandResult>;
   getSmartSessionSnapshot(input: GetSmartSessionSnapshotInput): Promise<SmartSessionSnapshot>;
   executeSmartCommand(input: ExecuteSmartCommandInput): Promise<ExecuteSmartCommandResult>;
+  getWorkflowSessionSnapshot(
+    input: GetWorkflowSessionSnapshotInput
+  ): Promise<WorkflowSessionSnapshot>;
+  executeWorkflowCommand(
+    input: ExecuteWorkflowCommandInput
+  ): Promise<ExecuteWorkflowCommandResult>;
   pickImportPaths(input?: PickImportPathsInput): Promise<PickImportPathsResult>;
   importMediaPaths(input: ImportMediaPathsInput): Promise<ImportMediaPathsResult>;
   refreshMediaHealth(input: RefreshMediaHealthInput): Promise<ProjectWorkspaceSnapshot>;
@@ -810,6 +921,8 @@ export const IPC_CHANNELS = {
   executeCaptionCommand: "clawcut:execute-caption-command",
   getSmartSessionSnapshot: "clawcut:get-smart-session-snapshot",
   executeSmartCommand: "clawcut:execute-smart-command",
+  getWorkflowSessionSnapshot: "clawcut:get-workflow-session-snapshot",
+  executeWorkflowCommand: "clawcut:execute-workflow-command",
   pickImportPaths: "clawcut:pick-import-paths",
   importMediaPaths: "clawcut:import-media-paths",
   refreshMediaHealth: "clawcut:refresh-media-health",

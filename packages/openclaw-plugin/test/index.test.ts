@@ -18,11 +18,17 @@ describe("openclaw plugin descriptor", () => {
     expect(manifest.tools.some((tool) => tool.name === "clawcut.capture_preview_frame")).toBe(true);
     expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.get_project_summary");
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_export");
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflows");
+    expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_workflow");
     expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.transport.kind).toBe("local-http");
     expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.defaultEnabledTools).toContain(
       "clawcut.capture_preview_frame"
     );
+    expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.defaultEnabledTools).toContain(
+      "clawcut.list_workflows"
+    );
     expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.optionalTools).toContain("clawcut.start_export");
+    expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.optionalTools).toContain("clawcut.start_workflow");
     expect(CLAWCUT_OPENCLAW_PLUGIN_MANIFEST.defaultToolPolicy.highImpact).toBe("allowlist");
   });
 
@@ -137,6 +143,67 @@ describe("openclaw plugin descriptor", () => {
       templateId: "bottom-center-clean"
     });
 
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  test("treats workflow start as an allowlisted high-impact tool", async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      void init;
+      return {
+        async json() {
+          return {
+            ok: true,
+            apiVersion: "v1",
+            requestId: "req-3",
+            name: "workflow.start",
+            warnings: [],
+            data: {
+              snapshot: {},
+              result: {
+                ok: true,
+                commandType: "StartWorkflow",
+                workflowRun: {
+                  id: "workflow-run-1"
+                }
+              }
+            }
+          };
+        }
+      } as Response;
+    });
+
+    const defaultClient = new ClawcutOpenClawClient({
+      baseUrl: "http://127.0.0.1:42170",
+      token: "token",
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+
+    await expect(
+      defaultClient.invokeTool("clawcut.start_workflow", {
+        directory: "/tmp/project",
+        templateId: "captioned-export-v1",
+        input: {
+          clipId: "clip-1"
+        }
+      })
+    ).rejects.toThrow(/not enabled/u);
+
+    const allowlistedClient = new ClawcutOpenClawClient({
+      baseUrl: "http://127.0.0.1:42170",
+      token: "token",
+      enabledHighImpactTools: ["clawcut.start_workflow"],
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+
+    const result = await allowlistedClient.invokeTool("clawcut.start_workflow", {
+      directory: "/tmp/project",
+      templateId: "captioned-export-v1",
+      input: {
+        clipId: "clip-1"
+      }
+    });
+
+    expect(result.operationName).toBe("workflow.start");
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

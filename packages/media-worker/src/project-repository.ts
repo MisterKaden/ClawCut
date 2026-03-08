@@ -4,6 +4,7 @@ import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import {
   createEmptyProjectDocument,
   setCaptionExportDefaults,
+  setDefaultBrandKitId,
   type CaptionExportDefaults,
   type CaptionTrack,
   type DerivedAsset,
@@ -35,6 +36,7 @@ import type {
   PersistedJobPayload,
   PersistedSmartAnalysisJobPayload,
   PersistedTranscriptionJobPayload,
+  PersistedWorkflowJobPayload,
   StoredJobRecord
 } from "./job-payloads";
 
@@ -141,7 +143,7 @@ function rowToMediaJob(row: {
   id: string;
   project_directory: string;
   media_item_id: string | null;
-  kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
+  kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis" | "workflow";
   status: JobState;
   progress: number;
   step: string;
@@ -235,6 +237,27 @@ function rowToMediaJob(row: {
     };
   }
 
+  if (row.kind === "workflow") {
+    const payload = JSON.parse(row.payload_json) as PersistedWorkflowJobPayload;
+
+    return {
+      id: row.id,
+      kind: "workflow",
+      projectDirectory: row.project_directory,
+      mediaItemId: row.media_item_id,
+      progress: row.progress,
+      step: row.step,
+      status: row.status,
+      attemptCount: row.attempt_count,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      errorMessage: row.error_message,
+      workflowRunId: payload.workflowRunId,
+      templateId: payload.templateId,
+      childJobIds: payload.childJobIds
+    };
+  }
+
   return {
     id: row.id,
     kind: row.kind,
@@ -278,7 +301,7 @@ export function listJobs(databasePath: string): Job[] {
       id: string;
       project_directory: string;
       media_item_id: string | null;
-      kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
+      kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis" | "workflow";
       status: JobState;
       progress: number;
       step: string;
@@ -322,7 +345,7 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
           id: string;
           project_directory: string;
           media_item_id: string | null;
-          kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
+          kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis" | "workflow";
           status: JobState;
           progress: number;
           step: string;
@@ -360,7 +383,7 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
 export function createJobRecord(
   databasePath: string,
   input: {
-    kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
+    kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis" | "workflow";
     projectDirectory: string;
     mediaItemId?: string | null;
     payload: PersistedJobPayload;
@@ -849,6 +872,16 @@ export async function updateCaptionExportDefaults(
 ): Promise<ProjectDocumentV3> {
   const { paths, document } = await loadAndMaybeMigrateProject(directory);
   const nextDocument = setCaptionExportDefaults(document, exportDefaults);
+  await saveProjectDocument(paths, nextDocument);
+  return nextDocument;
+}
+
+export async function updateDefaultBrandKitId(
+  directory: string,
+  brandKitId: string | null
+): Promise<ProjectDocumentV3> {
+  const { paths, document } = await loadAndMaybeMigrateProject(directory);
+  const nextDocument = setDefaultBrandKitId(document, brandKitId);
   await saveProjectDocument(paths, nextDocument);
   return nextDocument;
 }

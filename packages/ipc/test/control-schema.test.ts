@@ -55,6 +55,8 @@ describe("control schema", () => {
     expect(manifest.capabilityAvailability.openClawPlugin).toBe(true);
     expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.get_project_summary");
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.open_project");
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflows");
+    expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_workflow");
   });
 
   test("maps OpenClaw preview frame capture requests to the lighter frame reference by default", () => {
@@ -113,6 +115,14 @@ describe("control schema", () => {
     ).toBe(false);
     expect(
       OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.seek_preview_to_suggestion")
+        ?.availableByDefault
+    ).toBe(false);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.list_workflows")
+        ?.availableByDefault
+    ).toBe(true);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.start_workflow")
         ?.availableByDefault
     ).toBe(false);
   });

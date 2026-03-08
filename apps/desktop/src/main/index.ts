@@ -9,10 +9,10 @@ import { createPreviewBridge } from "./preview-bridge";
 import { createMainWindow } from "./window";
 
 const workspaceRoot = process.env.CLAWCUT_WORKSPACE_ROOT ?? process.cwd();
-const mediaWorkerHost = createMediaWorkerHost({ workspaceRoot });
 electron.app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 let mainWindow: electron.BrowserWindow | null = null;
 let localApiController: LocalApiController | null = null;
+let mediaWorkerHost: ReturnType<typeof createMediaWorkerHost> | null = null;
 
 function resolveCurrentWindow(): electron.BrowserWindow | null {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -25,6 +25,10 @@ function resolveCurrentWindow(): electron.BrowserWindow | null {
 async function bootstrap(): Promise<void> {
   const { app, BrowserWindow } = electron;
   await app.whenReady();
+  mediaWorkerHost = createMediaWorkerHost({
+    workspaceRoot,
+    userDataPath: app.getPath("userData")
+  });
   localApiController = new LocalApiController({
     configPath: join(app.getPath("userData"), "local-api.json"),
     worker: mediaWorkerHost,
@@ -33,58 +37,64 @@ async function bootstrap(): Promise<void> {
   await localApiController.initialize();
   registerIpcHandlers({
     async detectToolchain() {
-      return mediaWorkerHost.detectToolchain();
+      return mediaWorkerHost!.detectToolchain();
     },
     async createProject(input) {
-      return mediaWorkerHost.createProject(input);
+      return mediaWorkerHost!.createProject(input);
     },
     async openProject(input) {
-      return mediaWorkerHost.openProject(input);
+      return mediaWorkerHost!.openProject(input);
     },
     async getProjectSnapshot(input) {
-      return mediaWorkerHost.getProjectSnapshot(input);
+      return mediaWorkerHost!.getProjectSnapshot(input);
     },
     async getEditorSessionSnapshot(input) {
-      return mediaWorkerHost.getEditorSessionSnapshot(input);
+      return mediaWorkerHost!.getEditorSessionSnapshot(input);
     },
     async executeEditorCommand(input) {
-      return mediaWorkerHost.executeEditorCommand(input);
+      return mediaWorkerHost!.executeEditorCommand(input);
     },
     async getExportSessionSnapshot(input) {
-      return mediaWorkerHost.getExportSessionSnapshot(input);
+      return mediaWorkerHost!.getExportSessionSnapshot(input);
     },
     async executeExportCommand(input) {
-      return mediaWorkerHost.executeExportCommand(input);
+      return mediaWorkerHost!.executeExportCommand(input);
     },
     async getCaptionSessionSnapshot(input) {
-      return mediaWorkerHost.getCaptionSessionSnapshot(input);
+      return mediaWorkerHost!.getCaptionSessionSnapshot(input);
     },
     async executeCaptionCommand(input) {
-      return mediaWorkerHost.executeCaptionCommand(input);
+      return mediaWorkerHost!.executeCaptionCommand(input);
     },
     async getSmartSessionSnapshot(input) {
-      return mediaWorkerHost.getSmartSessionSnapshot(input);
+      return mediaWorkerHost!.getSmartSessionSnapshot(input);
     },
     async executeSmartCommand(input) {
-      return mediaWorkerHost.executeSmartCommand(input);
+      return mediaWorkerHost!.executeSmartCommand(input);
+    },
+    async getWorkflowSessionSnapshot(input) {
+      return mediaWorkerHost!.getWorkflowSessionSnapshot(input);
+    },
+    async executeWorkflowCommand(input) {
+      return mediaWorkerHost!.executeWorkflowCommand(input);
     },
     async pickImportPaths() {
       throw new Error("pickImportPaths is handled by the Electron IPC layer.");
     },
     async importMediaPaths(input) {
-      return mediaWorkerHost.importMediaPaths(input);
+      return mediaWorkerHost!.importMediaPaths(input);
     },
     async refreshMediaHealth(input) {
-      return mediaWorkerHost.refreshMediaHealth(input);
+      return mediaWorkerHost!.refreshMediaHealth(input);
     },
     async relinkMediaItem(input) {
-      return mediaWorkerHost.relinkMediaItem(input);
+      return mediaWorkerHost!.relinkMediaItem(input);
     },
     async retryJob(input) {
-      return mediaWorkerHost.retryJob(input);
+      return mediaWorkerHost!.retryJob(input);
     },
     async probeAsset(input) {
-      return mediaWorkerHost.probeAsset(input);
+      return mediaWorkerHost!.probeAsset(input);
     },
     async getLocalApiStatus() {
       if (!localApiController) {
@@ -133,12 +143,12 @@ void bootstrap();
 electron.app.on("window-all-closed", async () => {
   if (process.platform !== "darwin") {
     await localApiController?.dispose();
-    await mediaWorkerHost.dispose();
+    await mediaWorkerHost?.dispose();
     electron.app.quit();
   }
 });
 
 electron.app.on("before-quit", async () => {
   await localApiController?.dispose();
-  await mediaWorkerHost.dispose();
+  await mediaWorkerHost?.dispose();
 });

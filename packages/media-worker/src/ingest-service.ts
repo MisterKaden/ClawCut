@@ -491,6 +491,14 @@ async function runDerivedJob(directory: string, jobId: string): Promise<void> {
       step: "Completed"
     });
   } catch (error) {
+    if (
+      storedJob.kind !== "thumbnail" &&
+      storedJob.kind !== "waveform" &&
+      storedJob.kind !== "proxy"
+    ) {
+      throw error;
+    }
+
     const relativePath =
       storedJob.kind === "thumbnail"
         ? cacheManager.resolveThumbnailPath(mediaItem.id, mediaItem.sourceRevision).relativePath

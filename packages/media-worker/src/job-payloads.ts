@@ -43,18 +43,25 @@ export interface PersistedSmartAnalysisJobPayload {
   mediaItemId: string | null;
 }
 
+export interface PersistedWorkflowJobPayload {
+  workflowRunId: string;
+  templateId: string;
+  childJobIds: string[];
+}
+
 export type PersistedJobPayload =
   | PersistedIngestJobPayload
   | PersistedDerivedJobPayload
   | PersistedExportJobPayload
   | PersistedTranscriptionJobPayload
-  | PersistedSmartAnalysisJobPayload;
+  | PersistedSmartAnalysisJobPayload
+  | PersistedWorkflowJobPayload;
 
 export interface StoredJobRecord {
   id: string;
   projectDirectory: string;
   mediaItemId: string | null;
-  kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis";
+  kind: "ingest" | DerivedAssetType | "export" | "transcription" | "analysis" | "workflow";
   status: MediaJobStatus;
   progress: number;
   step: string;

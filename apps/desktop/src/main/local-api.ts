@@ -24,6 +24,7 @@ import type {
   ExecuteEditorCommandInput,
   ExecuteExportCommandInput,
   ExecuteSmartCommandInput,
+  ExecuteWorkflowCommandInput,
   LocalApiCommandInputMap,
   LocalApiCommandName,
   LocalApiEventStreamDescriptor,
@@ -75,13 +76,13 @@ const DEFAULT_SCOPES: LocalApiScope[] = [
 const eventStreamQuerySchema = z.object({
   directory: z.string().min(1).optional(),
   topics: z
-    .array(z.enum(["jobs", "exports", "transcriptions", "smart"]))
-    .default(["jobs", "exports", "transcriptions", "smart"])
+    .array(z.enum(["jobs", "exports", "transcriptions", "smart", "workflows"]))
+    .default(["jobs", "exports", "transcriptions", "smart", "workflows"])
 });
 const EVENT_STREAM_DESCRIPTOR: LocalApiEventStreamDescriptor = {
   transport: "sse",
   path: "/api/v1/events",
-  topics: ["jobs", "exports", "transcriptions", "smart"],
+  topics: ["jobs", "exports", "transcriptions", "smart", "workflows"],
   pollingFallback: "/api/v1/query"
 };
 
@@ -873,6 +874,17 @@ export class LocalApiController {
         ReturnType<LocalApiWorkerGateway["getSmartSessionSnapshot"]>
       >["editPlans"];
     };
+    workflows: {
+      runs: Awaited<
+        ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
+      >["workflowRuns"];
+      approvals: Awaited<
+        ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
+      >["pendingApprovals"];
+      activeWorkflowJobId: Awaited<
+        ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
+      >["activeWorkflowJobId"];
+    };
   }> {
     const projectSnapshot = await this.worker.getProjectSnapshot({ directory });
     const exportRuns = topics.includes("exports")
@@ -883,6 +895,9 @@ export class LocalApiController {
       : [];
     const smartSnapshot = topics.includes("smart")
       ? await this.worker.getSmartSessionSnapshot({ directory })
+      : null;
+    const workflowSnapshot = topics.includes("workflows")
+      ? await this.worker.getWorkflowSessionSnapshot({ directory })
       : null;
 
     return {
@@ -896,6 +911,11 @@ export class LocalApiController {
         suggestionSets: smartSnapshot?.suggestionSets ?? [],
         analysisRuns: smartSnapshot?.analysisRuns ?? [],
         editPlans: smartSnapshot?.editPlans ?? []
+      },
+      workflows: {
+        runs: workflowSnapshot?.workflowRuns ?? [],
+        approvals: workflowSnapshot?.pendingApprovals ?? [],
+        activeWorkflowJobId: workflowSnapshot?.activeWorkflowJobId ?? null
       }
     };
   }
@@ -1172,6 +1192,47 @@ export class LocalApiController {
           preview: previewResult
         };
       }
+      case "workflow.start":
+      case "workflow.startBatch":
+      case "workflow.cancelRun":
+      case "workflow.resumeRun":
+      case "workflow.retryStep":
+      case "workflow.approveStep":
+      case "workflow.rejectStep":
+      case "brandKits.create":
+      case "brandKits.update":
+      case "brandKits.setDefault": {
+        const {
+          directory,
+          ...commandInput
+        } = parsed as { directory: string } & Record<string, unknown>;
+        return this.worker.executeWorkflowCommand({
+          directory,
+          command: {
+            ...commandInput,
+            type:
+              name === "workflow.start"
+                ? "StartWorkflow"
+                : name === "workflow.startBatch"
+                  ? "StartBatchWorkflow"
+                  : name === "workflow.cancelRun"
+                    ? "CancelWorkflowRun"
+                    : name === "workflow.resumeRun"
+                      ? "ResumeWorkflowRun"
+                      : name === "workflow.retryStep"
+                        ? "RetryWorkflowStep"
+                        : name === "workflow.approveStep"
+                          ? "ApproveWorkflowStep"
+                          : name === "workflow.rejectStep"
+                            ? "RejectWorkflowStep"
+                            : name === "brandKits.create"
+                              ? "CreateBrandKit"
+                              : name === "brandKits.update"
+                                ? "UpdateBrandKit"
+                                : "SetDefaultBrandKit"
+          } as ExecuteWorkflowCommandInput["command"]
+        });
+      }
       case "export.createRequest":
       case "export.compilePlan":
       case "export.start":
@@ -1371,6 +1432,69 @@ export class LocalApiController {
             }
           })
         ).result;
+      case "workflow.session":
+        return this.worker.getWorkflowSessionSnapshot(
+          parsed as LocalApiQueryInputMap["workflow.session"]
+        );
+      case "workflow.list":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["workflow.list"]
+          )
+        ).workflows;
+      case "workflow.inspect": {
+        const workflowInput = parsed as LocalApiQueryInputMap["workflow.inspect"];
+        const snapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: workflowInput.directory
+        });
+        return snapshot.workflows.find((workflow) => workflow.id === workflowInput.workflowId) ?? null;
+      }
+      case "workflow.runs":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["workflow.runs"]
+          )
+        ).workflowRuns;
+      case "workflow.run": {
+        const workflowInput = parsed as LocalApiQueryInputMap["workflow.run"];
+        const snapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: workflowInput.directory
+        });
+        return snapshot.workflowRuns.find((run) => run.id === workflowInput.workflowRunId) ?? null;
+      }
+      case "workflow.approvals":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["workflow.approvals"]
+          )
+        ).pendingApprovals;
+      case "workflow.artifacts": {
+        const workflowInput = parsed as LocalApiQueryInputMap["workflow.artifacts"];
+        const snapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: workflowInput.directory
+        });
+        return (
+          snapshot.workflowRuns.find((run) => run.id === workflowInput.workflowRunId)?.artifacts ??
+          []
+        );
+      }
+      case "workflow.artifact": {
+        const workflowInput = parsed as LocalApiQueryInputMap["workflow.artifact"];
+        const snapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: workflowInput.directory
+        });
+        return (
+          snapshot.workflowRuns
+            .find((run) => run.id === workflowInput.workflowRunId)
+            ?.artifacts.find((artifact) => artifact.id === workflowInput.artifactId) ?? null
+        );
+      }
+      case "brandKits.list":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["brandKits.list"]
+          )
+        ).brandKits;
       case "jobs.list": {
         const snapshot = await this.worker.getProjectSnapshot(
           parsed as LocalApiQueryInputMap["jobs.list"]

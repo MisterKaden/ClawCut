@@ -394,6 +394,105 @@ const smartSuggestionQuerySchema = z.object({
 const smartSuggestionPreviewSchema = smartSuggestionQuerySchema.extend({
   anchor: z.enum(["start", "midpoint", "end"]).optional()
 });
+const workflowTemplateIdSchema = z.enum([
+  "captioned-export-v1",
+  "smart-cleanup-v1",
+  "short-clip-candidates-v1",
+  "batch-caption-export-v1"
+]);
+const captionTemplateIdSchema = z.enum([
+  "bottom-center-clean",
+  "lower-third-boxed",
+  "headline-top",
+  "social-highlight",
+  "karaoke-highlight",
+  "quote-card"
+]);
+const exportPresetIdSchema = z.enum([
+  "video-master-1080p",
+  "video-share-720p",
+  "audio-podcast-aac"
+]);
+const brandKitPayloadSchema = z.object({
+  id: nonEmptyString,
+  version: z.number().int().positive(),
+  name: nonEmptyString,
+  description: z.string(),
+  captionTemplateId: captionTemplateIdSchema,
+  captionStyleOverrides: z
+    .object({
+      placement: z.enum(["bottom-center", "lower-third", "top-headline", "center-card"]).optional(),
+      alignment: z.enum(["left", "center", "right"]).optional(),
+      fontFamilyIntent: z.enum(["sans", "display", "serif"]).optional(),
+      fontScale: z.enum(["small", "medium", "large", "hero"]).optional(),
+      fontWeight: z.union([z.literal(500), z.literal(600), z.literal(700), z.literal(800)]).optional(),
+      textColor: nonEmptyString.optional(),
+      accentColor: nonEmptyString.optional(),
+      backgroundStyle: z.enum(["none", "boxed", "card", "highlight"]).optional(),
+      activeWordStyle: z.enum(["none", "highlight", "underline"]).optional()
+    })
+    .default({}),
+  safeZoneDefaults: z.object({
+    anchor: z.enum(["title-safe", "action-safe"]),
+    placement: z.enum(["bottom-center", "lower-third", "top-headline", "center-card"]),
+    alignment: z.enum(["left", "center", "right"])
+  }),
+  exportPresetId: exportPresetIdSchema,
+  logoWatermark: z.object({
+    kind: z.enum(["none", "placeholder"]),
+    label: z.string().nullable()
+  }),
+  introOutro: z.object({
+    introPreset: z.string().nullable(),
+    outroPreset: z.string().nullable()
+  })
+});
+const workflowStartSchema = z.object({
+  directory: nonEmptyString,
+  templateId: workflowTemplateIdSchema,
+  input: z.record(z.string(), z.unknown())
+});
+const workflowStartBatchSchema = z.object({
+  directory: nonEmptyString,
+  templateId: z.literal("batch-caption-export-v1"),
+  input: z.record(z.string(), z.unknown())
+});
+const workflowRunSchema = z.object({
+  directory: nonEmptyString,
+  workflowRunId: nonEmptyString
+});
+const workflowRetryStepSchema = z.object({
+  directory: nonEmptyString,
+  workflowRunId: nonEmptyString,
+  stepRunId: nonEmptyString
+});
+const workflowApprovalSchema = z.object({
+  directory: nonEmptyString,
+  workflowRunId: nonEmptyString,
+  approvalId: nonEmptyString
+});
+const workflowTemplateQuerySchema = z.object({
+  directory: nonEmptyString,
+  workflowId: nonEmptyString
+});
+const workflowArtifactQuerySchema = z.object({
+  directory: nonEmptyString,
+  workflowRunId: nonEmptyString,
+  artifactId: nonEmptyString
+});
+const brandKitCreateSchema = z.object({
+  directory: nonEmptyString,
+  brandKit: brandKitPayloadSchema
+});
+const brandKitUpdateSchema = z.object({
+  directory: nonEmptyString,
+  brandKitId: nonEmptyString,
+  brandKit: brandKitPayloadSchema
+});
+const brandKitSetDefaultSchema = z.object({
+  directory: nonEmptyString,
+  brandKitId: nonEmptyString.nullable()
+});
 const exportRequestSchema = z.object({
   timelineId: nonEmptyString,
   exportMode: z.enum(["video", "audio", "frame"]).optional(),
@@ -1505,6 +1604,230 @@ const COMMAND_DEFINITIONS: CommandDefinition[] = [
   },
   {
     kind: "command",
+    name: "workflow.start",
+    category: "workflow",
+    description: "Instantiate and queue a built-in workflow run.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        templateId: enumProperty(
+          [
+            "captioned-export-v1",
+            "smart-cleanup-v1",
+            "short-clip-candidates-v1",
+            "batch-caption-export-v1"
+          ],
+          "Built-in workflow template id."
+        ),
+        input: objectProperty("Workflow input payload.", {}, [])
+      },
+      ["directory", "templateId", "input"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and queued workflow run.",
+    parser: workflowStartSchema
+  },
+  {
+    kind: "command",
+    name: "workflow.startBatch",
+    category: "workflow",
+    description: "Instantiate and queue a built-in batch workflow run.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        templateId: enumProperty(["batch-caption-export-v1"], "Batch workflow template id."),
+        input: objectProperty("Batch workflow input payload.", {}, [])
+      },
+      ["directory", "templateId", "input"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and queued batch workflow run.",
+    parser: workflowStartBatchSchema
+  },
+  {
+    kind: "command",
+    name: "workflow.cancelRun",
+    category: "workflow",
+    description: "Cancel an active or queued workflow run.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id.")
+      },
+      ["directory", "workflowRunId"]
+    ),
+    outputDescription: "Returns the updated workflow run state.",
+    parser: workflowRunSchema
+  },
+  {
+    kind: "command",
+    name: "workflow.resumeRun",
+    category: "workflow",
+    description: "Resume a paused, failed, or approval-blocked workflow run.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id.")
+      },
+      ["directory", "workflowRunId"]
+    ),
+    outputDescription: "Returns the updated workflow run state after re-queueing.",
+    parser: workflowRunSchema
+  },
+  {
+    kind: "command",
+    name: "workflow.retryStep",
+    category: "workflow",
+    description: "Reset one failed workflow step and re-queue the workflow run.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id."),
+        stepRunId: stringProperty("Workflow step run id.")
+      },
+      ["directory", "workflowRunId", "stepRunId"]
+    ),
+    outputDescription: "Returns the updated workflow run state after step reset.",
+    parser: workflowRetryStepSchema
+  },
+  {
+    kind: "command",
+    name: "workflow.approveStep",
+    category: "workflow",
+    description: "Approve a waiting workflow checkpoint and allow the run to continue.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id."),
+        approvalId: stringProperty("Approval id.")
+      },
+      ["directory", "workflowRunId", "approvalId"]
+    ),
+    outputDescription: "Returns the updated workflow run after approval.",
+    parser: workflowApprovalSchema
+  },
+  {
+    kind: "command",
+    name: "workflow.rejectStep",
+    category: "workflow",
+    description: "Reject a waiting workflow checkpoint and halt the run.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id."),
+        approvalId: stringProperty("Approval id.")
+      },
+      ["directory", "workflowRunId", "approvalId"]
+    ),
+    outputDescription: "Returns the updated workflow run after rejection.",
+    parser: workflowApprovalSchema
+  },
+  {
+    kind: "command",
+    name: "brandKits.create",
+    category: "brand-kits",
+    description: "Create a reusable local brand kit for caption and export workflows.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        brandKit: objectProperty("Brand kit definition.", {}, [])
+      },
+      ["directory", "brandKit"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and created brand-kit id.",
+    parser: brandKitCreateSchema
+  },
+  {
+    kind: "command",
+    name: "brandKits.update",
+    category: "brand-kits",
+    description: "Update a reusable local brand kit.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        brandKitId: stringProperty("Brand kit id."),
+        brandKit: objectProperty("Brand kit definition.", {}, [])
+      },
+      ["directory", "brandKitId", "brandKit"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and updated brand-kit id.",
+    parser: brandKitUpdateSchema
+  },
+  {
+    kind: "command",
+    name: "brandKits.setDefault",
+    category: "brand-kits",
+    description: "Set or clear the project default brand kit.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        brandKitId: stringProperty("Brand kit id.", { nullable: true })
+      },
+      ["directory", "brandKitId"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and project default brand-kit id.",
+    parser: brandKitSetDefaultSchema
+  },
+  {
+    kind: "command",
     name: "export.createRequest",
     category: "export",
     description: "Validate and normalize an export request without running FFmpeg.",
@@ -2024,6 +2347,191 @@ const QUERY_DEFINITIONS: QueryDefinition[] = [
   },
   {
     kind: "query",
+    name: "workflow.session",
+    category: "workflow",
+    description: "Return the workflow library, brand kits, workflow runs, and pending approvals for a project.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns the workflow session snapshot.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "workflow.list",
+    category: "workflow",
+    description: "List built-in workflow templates available in this ClawCut build.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns built-in workflow template definitions.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "workflow.inspect",
+    category: "workflow",
+    description: "Inspect one built-in workflow template and its inputs, safety profile, and expected outputs.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowId: stringProperty("Workflow template id.")
+      },
+      ["directory", "workflowId"]
+    ),
+    outputDescription: "Returns one workflow template or null when it is unavailable.",
+    parser: workflowTemplateQuerySchema
+  },
+  {
+    kind: "query",
+    name: "workflow.runs",
+    category: "workflow",
+    description: "List persisted workflow runs for the project.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns all known workflow runs.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "workflow.run",
+    category: "workflow",
+    description: "Return a single workflow run including step, approval, batch, and artifact state.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id.")
+      },
+      ["directory", "workflowRunId"]
+    ),
+    outputDescription: "Returns one workflow run or null when it is unavailable.",
+    parser: workflowRunSchema
+  },
+  {
+    kind: "query",
+    name: "workflow.approvals",
+    category: "workflow",
+    description: "List pending workflow approvals for the project.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns pending workflow approval records.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "workflow.artifacts",
+    category: "workflow",
+    description: "List explicit workflow artifacts for a workflow run.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id.")
+      },
+      ["directory", "workflowRunId"]
+    ),
+    outputDescription: "Returns workflow artifact records for the requested run.",
+    parser: workflowRunSchema
+  },
+  {
+    kind: "query",
+    name: "workflow.artifact",
+    category: "workflow",
+    description: "Inspect one workflow artifact record.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        workflowRunId: stringProperty("Workflow run id."),
+        artifactId: stringProperty("Workflow artifact id.")
+      },
+      ["directory", "workflowRunId", "artifactId"]
+    ),
+    outputDescription: "Returns one workflow artifact record or null when it is unavailable.",
+    parser: workflowArtifactQuerySchema
+  },
+  {
+    kind: "query",
+    name: "brandKits.list",
+    category: "brand-kits",
+    description: "List built-in and local reusable brand kits.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns all known brand kits resolved for the current environment.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
     name: "jobs.list",
     category: "jobs",
     description: "Return the current job list for a project.",
@@ -2277,6 +2785,51 @@ const OPENCLAW_TOOL_RECORDS: OpenClawToolDefinitionRecord[] = [
   createToolRecordFromOperation("clawcut.reject_suggestion", "smart.rejectSuggestion", false, [
     "Mutates suggestion review state without changing the timeline."
   ]),
+  createToolRecordFromOperation("clawcut.list_workflows", "workflow.list", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.inspect_workflow", "workflow.inspect", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.list_brand_kits", "brandKits.list", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.start_workflow", "workflow.start", false, [
+    "Starts a high-impact workflow run built from existing ClawCut commands and jobs."
+  ]),
+  createToolRecordFromOperation("clawcut.start_batch_workflow", "workflow.startBatch", false, [
+    "Starts a batch workflow run over multiple targets in one project."
+  ]),
+  createToolRecordFromOperation("clawcut.query_workflow_run", "workflow.run", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.list_workflow_runs", "workflow.runs", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.cancel_workflow_run", "workflow.cancelRun", false, [
+    "High-impact operation. Cancels a queued or active workflow run."
+  ]),
+  createToolRecordFromOperation("clawcut.retry_workflow_step", "workflow.retryStep", false, [
+    "High-impact operation. Requeues a failed workflow step."
+  ]),
+  createToolRecordFromOperation("clawcut.resume_workflow_run", "workflow.resumeRun", false, [
+    "High-impact operation. Resumes a paused or approval-blocked workflow run."
+  ]),
+  createToolRecordFromOperation("clawcut.list_pending_approvals", "workflow.approvals", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.approve_workflow_step", "workflow.approveStep", false, [
+    "High-impact operation. Explicitly crosses an approval boundary."
+  ]),
+  createToolRecordFromOperation("clawcut.reject_workflow_step", "workflow.rejectStep", false, [
+    "High-impact operation. Rejects a waiting approval and halts the workflow."
+  ]),
+  createToolRecordFromOperation("clawcut.list_workflow_artifacts", "workflow.artifacts", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.inspect_workflow_artifact", "workflow.artifact", true, [
+    "Read-only query."
+  ]),
   createToolRecordFromOperation("clawcut.start_export", "export.start", false, [
     "Starts a long-running export job."
   ]),
@@ -2520,6 +3073,8 @@ export function createLocalApiCapabilities(scopes: LocalApiScope[]): LocalApiCap
       media: true,
       timeline: true,
       smartEditing: true,
+      workflows: true,
+      brandKits: true,
       preview: true,
       previewInspection: true,
       export: true,

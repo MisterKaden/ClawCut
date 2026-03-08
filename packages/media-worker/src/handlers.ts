@@ -14,7 +14,9 @@ import type {
   RefreshMediaHealthInput,
   RelinkMediaItemInput,
   RetryJobInput,
-  ExecuteSmartCommandInput
+  ExecuteSmartCommandInput,
+  ExecuteWorkflowCommandInput,
+  GetWorkflowSessionSnapshotInput
 } from "@clawcut/ipc";
 
 import {
@@ -46,6 +48,10 @@ import {
   executeSmartCommand,
   getSmartSessionSnapshot
 } from "./smart-session";
+import {
+  executeWorkflowCommand,
+  getWorkflowSessionSnapshot
+} from "./workflow-session";
 import { detectToolchain } from "./toolchain";
 
 export async function handleDetectToolchain() {
@@ -104,6 +110,16 @@ export async function handleGetSmartSessionSnapshot(
 
 export async function handleExecuteSmartCommand(input: ExecuteSmartCommandInput) {
   return executeSmartCommand(input);
+}
+
+export async function handleGetWorkflowSessionSnapshot(
+  input: GetWorkflowSessionSnapshotInput
+) {
+  return getWorkflowSessionSnapshot(input);
+}
+
+export async function handleExecuteWorkflowCommand(input: ExecuteWorkflowCommandInput) {
+  return executeWorkflowCommand(input);
 }
 
 export async function handleImportMediaPaths(input: ImportMediaPathsInput) {

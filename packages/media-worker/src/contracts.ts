@@ -9,6 +9,8 @@ import type {
   ExecuteEditorCommandResult,
   ExecuteSmartCommandInput,
   ExecuteSmartCommandResult,
+  ExecuteWorkflowCommandInput,
+  ExecuteWorkflowCommandResult,
   ExportSessionSnapshot,
   EditorSessionSnapshot,
   GetCaptionSessionSnapshotInput,
@@ -16,6 +18,7 @@ import type {
   GetEditorSessionSnapshotInput,
   GetExportSessionSnapshotInput,
   GetSmartSessionSnapshotInput,
+  GetWorkflowSessionSnapshotInput,
   ImportMediaPathsInput,
   MediaProbeResult,
   OpenProjectInput,
@@ -29,6 +32,7 @@ import type {
   RetryJobInput,
   SerializedWorkerError,
   SmartSessionSnapshot,
+  WorkflowSessionSnapshot,
   ToolchainStatus
 } from "@clawcut/ipc";
 
@@ -80,6 +84,14 @@ export interface WorkerMethodMap {
   executeSmartCommand: {
     request: ExecuteSmartCommandInput;
     response: ExecuteSmartCommandResult;
+  };
+  getWorkflowSessionSnapshot: {
+    request: GetWorkflowSessionSnapshotInput;
+    response: WorkflowSessionSnapshot;
+  };
+  executeWorkflowCommand: {
+    request: ExecuteWorkflowCommandInput;
+    response: ExecuteWorkflowCommandResult;
   };
   pickImportPaths: {
     request: PickImportPathsInput | null;

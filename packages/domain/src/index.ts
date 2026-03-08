@@ -1,3 +1,4 @@
+export * from "./brand-kits";
 export * from "./captions";
 export * from "./editor";
 export * from "./jobs";
@@ -11,3 +12,4 @@ export * from "./render-compiler";
 export * from "./smart-editing";
 export * from "./timeline";
 export * from "./timeline-engine";
+export * from "./workflows";

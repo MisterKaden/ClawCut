@@ -2,170 +2,135 @@
 
 ## Domain tests
 
-Vitest covers the pure project, timeline, preview, transcript/caption, and render-compiler logic:
+Vitest covers the pure domain model first.
 
-- project document creation
-- V1 -> V2 -> V3 migration
-- timeline creation
-- insert collision rules
-- split, trim, move, and ripple-delete math
-- snapping to markers, clip edges, and playhead
-- locked-track enforcement
-- preview composition
-  - active clip resolution
-  - gap handling
-  - proxy vs original selection
-  - trim-to-source mapping
-  - overlay activation
-  - frame-step sizing
-- render compilation
-  - span slicing across gaps and trims
-  - explicit range and region target resolution
-  - topmost visible video resolution
-  - mixed audio contribution resolution
-  - preset validation and unsupported-feature failures
-- transcript normalization
-  - word-level timing storage
-  - glossary normalization and prompt guidance composition
-  - transcript text editing without timing loss
-- caption generation
-  - transcript-to-caption mapping
-  - template application
-  - SRT/ASS formatting
-  - preview overlay activation and active-word highlighting
-  - transcript summary and caption coverage reporting
-- smart editing
-  - silence detection normalization from waveform envelopes
-  - filler-word heuristic detection and timing linkage
-  - weak-segment and highlight suggestion output shape
-  - suggestion scoring, rationale, and evidence structure
-  - dry-run edit-plan compilation
-  - range-delete and region-plan command generation
+Current domain coverage includes:
 
-These tests are the main safety net because the editing and preview semantics are shared by the UI and future programmatic callers.
+- project schema creation and migration through `ProjectDocumentV6`
+- timeline command behavior and undo-safe edit math
+- preview composition and quality/source resolution
+- render-plan compilation and export target resolution
+- transcript normalization and editable transcript behavior
+- caption generation, template application, subtitle formatting, and burn-in hooks
+- smart suggestion generation:
+  - silence
+  - filler words
+  - highlights
+- smart edit-plan compilation and rationale structure
+- brand-kit schema validation and override merge behavior
+- workflow template validation
+- workflow safety-profile aggregation
+- workflow dependency ordering and approval-step metadata
+
+These tests are the main safety net for logic shared by:
+
+- the desktop UI
+- the local control surface
+- the OpenClaw adapter
+- future higher-level automation
 
 ## Worker integration tests
 
-Worker tests cover Stage 2 media flows plus Stage 3 editing persistence, Stage 5 export execution, and Stage 6 transcription/caption workflows:
+Worker tests cover real persistence and orchestration behavior with temp projects.
+
+Current worker coverage includes:
 
 - project persistence
-- derived-asset registration
-- ingest, proxy, thumbnail, waveform, and relink flows
-- exact-duplicate import safety
-- editor session command execution
-- undo and redo stacks
-- autosave of timeline edits
-- editor session snapshot queries
-- export queue lifecycle
-- successful video export plus ffprobe verification
-- successful audio-only export plus ffprobe verification
+- ingest, cache, relink, and derived-asset registration
+- editor session execution and timeline persistence
+- export queue lifecycle and verification
 - transcription job lifecycle
-- deterministic fixture-backed transcription
-- transcription guidance request handling
-- engine-unavailable failure and retry
-- caption-track persistence and subtitle export
-- burn-in export with caption artifacts
-- smart analysis job lifecycle
-- smart suggestion persistence and edit-plan persistence
-- suggestion application through the editor command engine
-- undo after smart-plan application
-- range export duration verification
-- development-manifest and concat artifact persistence
-- snapshot capture from completed export output
-- snapshot capture from a selected timeline position
-- missing-media export failure
-- invalid destination failure
-- cancellation and retry
+- caption persistence and subtitle export
+- smart analysis persistence and suggestion application
+- workflow run lifecycle
+- approval boundary behavior
+- resume/retry semantics
+- workflow artifact creation
+- parent workflow job and child job linkage
+- batch workflow partial-failure behavior
+- local brand-kit store persistence and project default assignment
 
-The tests use temp project directories and local fixtures instead of relying on user media.
+These tests intentionally exercise the worker-owned services instead of reproducing logic inside test helpers.
 
-## Renderer preview tests
+## Control and OpenClaw tests
 
-Renderer-side tests cover the Stage 4 preview engine without depending on real DOM media playback:
+The control surface is tested as a schema-first contract.
 
-- preview state transitions
-- command-driven load, seek, play, pause, and frame step
-- quality-mode switching
-- sequential clip resolution
-- programmatic frame snapshot capture foundation
-- structured preview errors when accurate preview cannot resolve a source
+Current coverage includes:
 
-The `PreviewController` is tested with a fake scheduler and a fake backend so timing and transport behavior stay deterministic.
+- command/query schema descriptors
+- safety and mutability classification
+- allowlist/default exposure rules
+- OpenClaw manifest generation
+- OpenClaw adapter tool mapping
+- authenticated local transport success/failure
+- structured validation errors
+- capability discovery
+- SSE payload shape for jobs and workflows
+- preview frame-reference queries
+- workflow and brand-kit operation mapping
 
-## Local API tests
+The goal is to keep OpenClaw and local automation on the same typed contract the UI already uses.
 
-Stage 7 adds HTTP-level tests around the authenticated local control surface:
+## Renderer tests
 
-- unauthenticated requests rejected with structured auth errors
-- malformed request envelopes rejected with structured validation errors
-- scope enforcement for mutating and privileged actions
-- canonical operation-schema validation
-- command dispatch for project, export, and caption operations
-- query dispatch for timeline, preview, preview-frame inspection, and job state
-- capability discovery, OpenClaw tool discovery, and OpenClaw manifest discovery
-- OpenClaw plugin adapter mapping
-- authenticated SSE event-stream updates
-- job-detail queries resolve related export and transcription runs
-- smart session queries and suggestion inspection
-- smart preview-seek command mapping for suggestion review
+Renderer tests stay focused on renderer-owned behavior only:
 
-These tests run against the real local API server class on an ephemeral localhost port with fake worker and preview bridges.
+- preview controller state transitions
+- adapter-mediated playback control
+- preview overlay resolution
+- caption overlay activation
+- workflow panel rendering and interaction wiring as needed
+
+The renderer does not get to own domain logic, so domain behaviors are tested elsewhere.
 
 ## Smoke tests
 
-Smoke verification launches the built Electron app and drives the desktop shell through the typed control surfaces:
+Smoke verification launches the built Electron app and drives real end-to-end flows.
+
+Current smoke coverage includes:
 
 1. create a temp project
-2. wait for the local API to report a running authenticated control surface
-3. verify unauthenticated capability requests are rejected
-4. verify authenticated capabilities, OpenClaw tool discovery, and OpenClaw manifest discovery
-5. verify the thin OpenClaw adapter can read the manifest
-6. open the project through the local control surface
-6. import a temp-copied sample video through the local API
-7. wait for ingest and derived jobs to settle through the local API
-8. verify metadata and waveform UI render
-9. create the default timeline
-10. insert linked media
-11. split the initial clip into sequential segments
-12. load the preview engine
-13. verify fast mode prefers proxies
-14. verify standard mode prefers originals
-15. seek, play, pause, and frame-step through preview
-16. verify the authenticated local event stream emits `ready` and `jobs.snapshot`
-17. query timeline state through the OpenClaw adapter or local transport
-18. inspect the current preview frame through the local API
-19. transcribe the selected clip through the OpenClaw adapter using the fixture transcription adapter
-20. verify transcription job details are queryable through the local API
-21. generate a caption track through the OpenClaw adapter
-22. load preview and seek through the local API, then verify a preview caption overlay appears
-23. export an SRT sidecar through the local API
-24. enable burn-in captions through the local API
-25. queue a burn-in video export through the OpenClaw adapter and verify the output is probeable
-26. query export job progress through the OpenClaw adapter or local transport
-27. capture a still frame from the completed export through the local API
-28. queue an audio export through the local API and verify the output contains audio
-29. capture a still frame from a selected timeline position through the local API
-30. run silence analysis through the OpenClaw adapter
-31. inspect and seek to a suggestion through the OpenClaw adapter
-32. compile a dry-run smart edit plan
-33. apply one smart suggestion and verify the timeline shortens
-34. reject one smart suggestion and verify its review state persists
-35. undo the smart edit and verify the timeline restores
-36. reopen the project and verify the timeline persisted
-37. capture a screenshot artifact
+2. verify the local control surface comes up authenticated
+3. verify unauthorized requests are rejected
+4. verify capability and OpenClaw manifest/tool discovery
+5. import sample media through the integration boundary
+6. wait for ingest and derived assets to settle
+7. create timeline and insert linked media
+8. verify preview load, seek, play, pause, frame-step, and proxy/original switching
+9. transcribe a clip with the fixture adapter
+10. generate captions and verify preview-visible caption overlays
+11. export subtitles
+12. run video and audio exports plus output verification
+13. capture export/timeline snapshots
+14. run Stage 8 smart analysis, inspect suggestions, compile a plan, apply one suggestion, reject one suggestion, and undo
+15. create a fresh workflow-oriented project for Stage 9
+16. run `captioned-export-v1` end to end
+17. run `smart-cleanup-v1` through approval, approval-aware resume, application, and undo verification
+18. run `batch-caption-export-v1` over multiple clip targets
+19. inspect workflow artifacts/results through the integration boundary
+20. capture a screenshot artifact
 
-This keeps smoke focused on the highest-value integrated editor workflow while still avoiding fragile OS dialog automation for every interaction.
+The smoke path is intentionally fixture-driven and deterministic:
 
-## CI posture
+- fixture transcription adapter
+- deterministic waveform override for the workflow cleanup path
+- local temp projects only
 
-CI should fail on regressions in:
+## Verification posture per stage
 
-- type safety
-- lint
-- pure timeline behavior
-- pure preview behavior
-- worker media behavior
-- worker editor-session behavior
-- Electron smoke
+For shipped work the verification bar remains:
 
-The current workflow remains macOS-oriented because Electron plus local FFmpeg tooling should behave like the primary development environment.
+- install dependencies when needed
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm test`
+- `pnpm smoke`
+
+When workflow or transport architecture changes, update tests and smoke in the same change set.
+
+## Current limitations
+
+- Smoke is broad and therefore slower than unit/integration tests.
+- Workflow smoke currently validates built-in templates only.
+- The SSE stream is lightweight and polling-backed, so integration tests focus on envelope shape and emitted topics rather than strict event timing guarantees.

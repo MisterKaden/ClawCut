@@ -1,4 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -256,6 +264,65 @@ async function waitForTranscriptionToFinishViaApi(
   throw new Error(`Timed out waiting for transcription job ${jobId} through the local API.`);
 }
 
+async function waitForWorkflowRunStateViaApi(
+  localApi: LocalApiSmokeStatus,
+  projectDirectory: string,
+  workflowRunId: string,
+  statuses: string[],
+  timeoutMs = 60_000
+): Promise<{
+  id: string;
+  status: string;
+  batchItems: Array<{ id: string; status: string }>;
+  artifacts: Array<{ id: string; kind: string; path: string | null }>;
+  approvals: Array<{ id: string; status: string }>;
+  warnings: string[];
+  error: { message: string } | null;
+  steps: Array<{ id: string; kind: string; status: string; error: { message: string } | null }>;
+}> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const details = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        id: string;
+        status: string;
+        batchItems: Array<{ id: string; status: string }>;
+        artifacts: Array<{ id: string; kind: string; path: string | null }>;
+        approvals: Array<{ id: string; status: string }>;
+        warnings: string[];
+        error: { message: string } | null;
+        steps: Array<{ id: string; kind: string; status: string; error: { message: string } | null }>;
+      } | null;
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflow.run",
+        input: {
+          directory: projectDirectory,
+          workflowRunId
+        }
+      }
+    });
+
+    if (!details.body.ok) {
+      throw new Error("Workflow run query failed while waiting for Stage 9 workflow completion.");
+    }
+
+    if (details.body.data && statuses.includes(details.body.data.status)) {
+      return details.body.data;
+    }
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+  }
+
+  throw new Error(
+    `Timed out waiting for workflow run ${workflowRunId} to reach ${statuses.join(", ")}.`
+  );
+}
+
 async function runSmoke(): Promise<void> {
   const require = createRequire(import.meta.url);
   const workspaceRoot = resolve(process.cwd());
@@ -263,11 +330,24 @@ async function runSmoke(): Promise<void> {
   const electronBinary = require("electron") as string;
   const mainEntry = resolve(appRoot, "out/main/index.js");
   const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage8-smoke-project-"));
+  const workflowProjectDirectory = mkdtempSync(
+    join(tmpdir(), "clawcut-stage9-smoke-workflow-project-")
+  );
   const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage8-smoke-import-"));
   const originalPath = join(importDirectory, "talking-head-sample.mp4");
+  const transcriptionFixturePath = join(importDirectory, "stage9-transcript.txt");
   const screenshotDirectory = resolve(workspaceRoot, "output/playwright");
 
   copyFileSync(resolve(workspaceRoot, "fixtures/media/talking-head-sample.mp4"), originalPath);
+  writeFileSync(
+    transcriptionFixturePath,
+    [
+      "Clawcut keeps transcripts editable and ready for deterministic captions.",
+      "Um, you know, Clawcut keeps smart workflows reviewable instead of hidden.",
+      "Like, OpenClaw can inspect preview, export, and caption state safely."
+    ].join("\n"),
+    "utf8"
+  );
   mkdirSync(screenshotDirectory, { recursive: true });
 
   const electronApp = await electron.launch({
@@ -278,7 +358,8 @@ async function runSmoke(): Promise<void> {
       ...process.env,
       CLAWCUT_WORKSPACE_ROOT: workspaceRoot,
       CLAWCUT_SMOKE: "1",
-      CLAWCUT_TRANSCRIPTION_ADAPTER: "fixture"
+      CLAWCUT_TRANSCRIPTION_ADAPTER: "fixture",
+      CLAWCUT_TRANSCRIPTION_FIXTURE_PATH: transcriptionFixturePath
     }
   });
 
@@ -312,6 +393,10 @@ async function runSmoke(): Promise<void> {
         "clawcut.seek_preview_to_suggestion"
       ],
       enabledHighImpactTools: [
+        "clawcut.approve_workflow_step",
+        "clawcut.resume_workflow_run",
+        "clawcut.start_batch_workflow",
+        "clawcut.start_workflow",
         "clawcut.transcribe_clip",
         "clawcut.apply_suggestion",
         "clawcut.export_subtitles",
@@ -405,23 +490,25 @@ async function runSmoke(): Promise<void> {
       throw new Error("The OpenClaw plugin client could not resolve the tool manifest.");
     }
 
-    const openedViaApi = await requestLocalApi<{ ok: boolean; data: { directory: string } }>(
-      localApi,
-      "/api/v1/command",
-      {
-        method: "POST",
-        token: localApi.token,
-        body: {
-          name: "project.open",
-          input: {
-            directory: projectDirectory
-          }
+    const projectSummaryViaApi = await requestLocalApi<{
+      ok: boolean;
+      data: { directory: string; projectName: string };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "project.summary",
+        input: {
+          directory: projectDirectory
         }
       }
-    );
+    });
 
-    if (!openedViaApi.body.ok || openedViaApi.body.data.directory !== projectDirectory) {
-      throw new Error("Opening the project through the local API failed.");
+    if (
+      !projectSummaryViaApi.body.ok ||
+      projectSummaryViaApi.body.data.directory !== projectDirectory
+    ) {
+      throw new Error("Project summary lookup through the local API failed.");
     }
 
     const importViaApi = await requestLocalApi<{
@@ -1533,25 +1620,519 @@ async function runSmoke(): Promise<void> {
       throw new Error("Could not capture a still frame from the timeline.");
     }
 
-    await page.getByTestId("open-project-button").click();
+    await page.getByTestId("project-directory-input").fill(workflowProjectDirectory);
+    await page.getByTestId("project-name-input").fill("Stage 9 Workflow Smoke");
+    await page.getByTestId("create-project-button").click();
     await page.waitForFunction(
-      async (directory) => {
-        const snapshot = await window.clawcut.getEditorSessionSnapshot({ directory });
-        return Object.keys(snapshot.timeline.clipsById).length >= 2;
-      },
-      projectDirectory,
+      () =>
+        document
+          .querySelector('[data-testid="workspace-header"]')
+          ?.textContent?.includes("Stage 9 Workflow Smoke") === true,
+      undefined,
       {
         timeout: 10_000
       }
     );
 
+    const workflowImport = await requestLocalApi<{
+      ok: boolean;
+      data: { acceptedPaths: string[] };
+    }>(localApi, "/api/v1/command", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "media.import",
+        input: {
+          directory: workflowProjectDirectory,
+          paths: [originalPath]
+        }
+      }
+    });
+
+    if (!workflowImport.body.ok || !workflowImport.body.data.acceptedPaths.includes(originalPath)) {
+      throw new Error("Stage 9 workflow smoke could not import media into the workflow project.");
+    }
+
+    await waitForLibraryToSettleViaApi(localApi, workflowProjectDirectory);
+
+    const workflowProjectSnapshot = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        libraryItems: Array<{
+          metadataSummary: {
+            durationMs: number | null;
+          };
+          derivedAssets: {
+            waveform: {
+              relativePath: string;
+            } | null;
+          };
+        }>;
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "project.snapshot",
+        input: {
+          directory: workflowProjectDirectory
+        }
+      }
+    });
+
+    const workflowWaveformRelativePath =
+      workflowProjectSnapshot.body.ok
+        ? workflowProjectSnapshot.body.data.libraryItems[0]?.derivedAssets.waveform?.relativePath
+        : null;
+
+    if (!workflowWaveformRelativePath) {
+      throw new Error("Workflow smoke project did not expose a waveform asset.");
+    }
+
+    writeFileSync(
+      resolve(workflowProjectDirectory, ".clawcut/cache", workflowWaveformRelativePath),
+      JSON.stringify({
+        version: 1,
+        bucketCount: 8,
+        durationMs: workflowProjectSnapshot.body.data.libraryItems[0]?.metadataSummary.durationMs ?? 4_000,
+        peaks: [0.24, 0.22, 0.01, 0.01, 0.01, 0.21, 0.18, 0.16],
+        rms: [0.12, 0.11, 0.01, 0.01, 0.01, 0.09, 0.08, 0.07]
+      }),
+      "utf8"
+    );
+
+    const workflowTimelineSeed = await page.evaluate(async (directory) => {
+      const initial = await window.clawcut.getEditorSessionSnapshot({ directory });
+      const mediaItemId = initial.libraryItems[0]?.id;
+
+      if (!mediaItemId) {
+        throw new Error("Workflow smoke project did not expose an imported media item.");
+      }
+
+      const timeline = await window.clawcut.executeEditorCommand({
+        directory,
+        command: {
+          type: "CreateTimeline",
+          timelineId: initial.timeline.id
+        }
+      });
+
+      if (!timeline.result.ok || timeline.result.commandType !== "CreateTimeline") {
+        throw new Error("Workflow smoke could not create a timeline.");
+      }
+
+      const [videoTrackId, audioTrackId] = timeline.result.createdTrackIds;
+
+      if (!videoTrackId || !audioTrackId) {
+        throw new Error("Workflow smoke timeline did not create V1/A1 tracks.");
+      }
+
+      const inserted = await window.clawcut.executeEditorCommand({
+        directory,
+        command: {
+          type: "InsertLinkedMedia",
+          timelineId: timeline.snapshot.timeline.id,
+          mediaItemId,
+          videoTrackId,
+          audioTrackId,
+          timelineStartUs: 0
+        }
+      });
+
+      if (!inserted.result.ok) {
+        throw new Error("Workflow smoke could not insert linked media.");
+      }
+
+      const videoClipId = inserted.snapshot.timeline.tracksById[videoTrackId]?.clipIds[0];
+      const videoClip = videoClipId ? inserted.snapshot.timeline.clipsById[videoClipId] : null;
+
+      if (!videoClipId || !videoClip) {
+        throw new Error("Workflow smoke could not resolve the inserted video clip.");
+      }
+
+      const splitTimeUs =
+        videoClip.timelineStartUs +
+        Math.round((videoClip.sourceOutUs - videoClip.sourceInUs) / 2);
+      const split = await window.clawcut.executeEditorCommand({
+        directory,
+        command: {
+          type: "SplitClip",
+          timelineId: inserted.snapshot.timeline.id,
+          clipId: videoClipId,
+          splitTimeUs
+        }
+      });
+
+      if (!split.result.ok || split.result.commandType !== "SplitClip") {
+        throw new Error("Workflow smoke could not split the clip for batching.");
+      }
+
+      const snapshot = await window.clawcut.getEditorSessionSnapshot({ directory });
+      const clipIds = [...(snapshot.timeline.tracksById[videoTrackId]?.clipIds ?? [])];
+
+      return {
+        timelineId: snapshot.timeline.id,
+        clipIds
+      };
+    }, workflowProjectDirectory);
+
+    if (workflowTimelineSeed.clipIds.length < 2) {
+      throw new Error("Workflow smoke project did not create two video clips.");
+    }
+
+    const workflowCatalog = await openClawClient.invokeTool<Array<{ id: string }>>(
+      "clawcut.list_workflows",
+      {
+        directory: workflowProjectDirectory
+      }
+    );
+
+    if (
+      !workflowCatalog.response.ok ||
+      !workflowCatalog.response.data.some((workflow) => workflow.id === "captioned-export-v1")
+    ) {
+      throw new Error("Workflow discovery did not expose the built-in Stage 9 templates.");
+    }
+
+    const brandKitCatalog = await openClawClient.invokeTool<Array<{ id: string }>>(
+      "clawcut.list_brand_kits",
+      {
+        directory: workflowProjectDirectory
+      }
+    );
+
+    if (
+      !brandKitCatalog.response.ok ||
+      !brandKitCatalog.response.data.some((brandKit) => brandKit.id === "clawcut-clean")
+    ) {
+      throw new Error("Brand kit discovery did not expose the built-in kits.");
+    }
+
+    const timelineForWorkflows = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        timeline: {
+          clipsById: Record<string, { timelineStartUs: number; sourceInUs: number; sourceOutUs: number }>;
+        };
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.get",
+        input: {
+          directory: workflowProjectDirectory
+        }
+      }
+    });
+
+    if (!timelineForWorkflows.body.ok) {
+      throw new Error("Could not query the workflow smoke timeline.");
+    }
+
+    const timelineEndBeforeWorkflowCleanup = Object.values(
+      timelineForWorkflows.body.data.timeline.clipsById
+    ).reduce(
+      (max, clip) => Math.max(max, clip.timelineStartUs + (clip.sourceOutUs - clip.sourceInUs)),
+      0
+    );
+
+    const captionedWorkflowStart = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        workflowRun: { id: string };
+      };
+    }>("clawcut.start_workflow", {
+      directory: workflowProjectDirectory,
+      templateId: "captioned-export-v1",
+      input: {
+        clipId: workflowTimelineSeed.clipIds[0],
+        brandKitId: "clawcut-clean",
+        exportPresetId: "video-share-720p",
+        exportSubtitles: true,
+        enableBurnIn: false,
+        requireApprovalForExport: false
+      }
+    });
+
+    if (
+      !captionedWorkflowStart.response.ok ||
+      !captionedWorkflowStart.response.data.result.ok ||
+      captionedWorkflowStart.response.data.result.commandType !== "StartWorkflow"
+    ) {
+      throw new Error("Captioned export workflow did not start through the OpenClaw tool boundary.");
+    }
+
+    const captionedWorkflowCompleted = await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      captionedWorkflowStart.response.data.result.workflowRun.id,
+      ["completed", "failed"]
+    );
+
+    if (
+      captionedWorkflowCompleted.status !== "completed" ||
+      !captionedWorkflowCompleted.artifacts.some((artifact) => artifact.kind === "subtitle") ||
+      !captionedWorkflowCompleted.artifacts.some((artifact) => artifact.kind === "export")
+    ) {
+      throw new Error("Captioned export workflow did not produce the expected artifacts.");
+    }
+
+    const captionedWorkflowArtifacts = await openClawClient.invokeTool<
+      Array<{ id: string; kind: string; path: string | null }>
+    >("clawcut.list_workflow_artifacts", {
+      directory: workflowProjectDirectory,
+      workflowRunId: captionedWorkflowStart.response.data.result.workflowRun.id
+    });
+
+    if (
+      !captionedWorkflowArtifacts.response.ok ||
+      !captionedWorkflowArtifacts.response.data.some((artifact) => artifact.kind === "subtitle")
+    ) {
+      throw new Error("Workflow artifacts were not inspectable through the OpenClaw boundary.");
+    }
+
+    const resumableWorkflowStart = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        workflowRun: { id: string };
+      };
+    }>("clawcut.start_workflow", {
+      directory: workflowProjectDirectory,
+      templateId: "smart-cleanup-v1",
+      input: {
+        clipId: workflowTimelineSeed.clipIds[0],
+        primarySuggestionSource: "filler",
+        requireApproval: true
+      }
+    });
+
+    if (
+      !resumableWorkflowStart.response.ok ||
+      !resumableWorkflowStart.response.data.result.ok ||
+      resumableWorkflowStart.response.data.result.commandType !== "StartWorkflow"
+    ) {
+      throw new Error("Smart cleanup workflow did not start through the OpenClaw boundary.");
+    }
+
+    await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      resumableWorkflowStart.response.data.result.workflowRun.id,
+      ["waiting-approval"]
+    );
+
+    const resumedBeforeApproval = await requestLocalApi<{
+      ok: boolean;
+      data: { result: { ok: boolean; commandType: string } };
+    }>(localApi, "/api/v1/command", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflow.resumeRun",
+        input: {
+          directory: workflowProjectDirectory,
+          workflowRunId: resumableWorkflowStart.response.data.result.workflowRun.id
+        }
+      }
+    });
+
+    if (
+      !resumedBeforeApproval.body.ok ||
+      !resumedBeforeApproval.body.data.result.ok ||
+      resumedBeforeApproval.body.data.result.commandType !== "ResumeWorkflowRun"
+    ) {
+      throw new Error("Workflow resume did not respond cleanly through the integration boundary.");
+    }
+
+    await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      resumableWorkflowStart.response.data.result.workflowRun.id,
+      ["waiting-approval"]
+    );
+
+    const smartCleanupWorkflowStart = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        workflowRun: { id: string };
+      };
+    }>("clawcut.start_workflow", {
+      directory: workflowProjectDirectory,
+      templateId: "smart-cleanup-v1",
+      input: {
+        clipId: workflowTimelineSeed.clipIds[0],
+        primarySuggestionSource: "filler",
+        requireApproval: true
+      }
+    });
+
+    if (
+      !smartCleanupWorkflowStart.response.ok ||
+      !smartCleanupWorkflowStart.response.data.result.ok ||
+      smartCleanupWorkflowStart.response.data.result.commandType !== "StartWorkflow"
+    ) {
+      throw new Error("Approved smart cleanup workflow did not start through the OpenClaw boundary.");
+    }
+
+    await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      smartCleanupWorkflowStart.response.data.result.workflowRun.id,
+      ["waiting-approval"]
+    );
+
+    const pendingApprovals = await openClawClient.invokeTool<
+      Array<{ id: string; workflowRunId: string }>
+    >("clawcut.list_pending_approvals", {
+      directory: workflowProjectDirectory
+    });
+
+    const approvalsForRun = pendingApprovals.response.ok
+      ? pendingApprovals.response.data.filter(
+          (approval) =>
+            approval.workflowRunId === smartCleanupWorkflowStart.response.data.result.workflowRun.id
+        )
+      : [];
+
+    if (approvalsForRun.length === 0) {
+      throw new Error("Smart cleanup workflow did not expose a pending approval.");
+    }
+
+    for (const approval of approvalsForRun) {
+      const approvedWorkflow = await openClawClient.invokeTool<{
+        snapshot: unknown;
+        result: { ok: boolean; commandType: string };
+      }>("clawcut.approve_workflow_step", {
+        directory: workflowProjectDirectory,
+        workflowRunId: smartCleanupWorkflowStart.response.data.result.workflowRun.id,
+        approvalId: approval.id
+      });
+
+      if (
+        !approvedWorkflow.response.ok ||
+        !approvedWorkflow.response.data.result.ok ||
+        approvedWorkflow.response.data.result.commandType !== "ApproveWorkflowStep"
+      ) {
+        throw new Error("Workflow approval did not resume the smart cleanup run.");
+      }
+    }
+
+    const completedSmartWorkflow = await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      smartCleanupWorkflowStart.response.data.result.workflowRun.id,
+      ["completed", "failed"]
+    );
+
+    if (completedSmartWorkflow.status !== "completed") {
+      throw new Error(
+        `Smart cleanup workflow did not complete after approval: ${completedSmartWorkflow.error?.message ?? completedSmartWorkflow.status} | steps=${completedSmartWorkflow.steps
+          .map((step) => `${step.kind}:${step.status}${step.error ? `(${step.error.message})` : ""}`)
+          .join(", ")}`
+      );
+    }
+
+    const timelineAfterWorkflowCleanup = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        timeline: {
+          clipsById: Record<string, { timelineStartUs: number; sourceInUs: number; sourceOutUs: number }>;
+        };
+      };
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.get",
+        input: {
+          directory: workflowProjectDirectory
+        }
+      }
+    });
+
+    const timelineEndAfterWorkflowCleanup = Object.values(
+      timelineAfterWorkflowCleanup.body.data.timeline.clipsById
+    ).reduce(
+      (max, clip) => Math.max(max, clip.timelineStartUs + (clip.sourceOutUs - clip.sourceInUs)),
+      0
+    );
+
+    if (timelineEndAfterWorkflowCleanup >= timelineEndBeforeWorkflowCleanup) {
+      throw new Error("Approved smart cleanup workflow did not shorten the timeline.");
+    }
+
+    const undoWorkflowCleanup = await requestLocalApi<{ ok: boolean }>(localApi, "/api/v1/command", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "timeline.undo",
+        input: {
+          directory: workflowProjectDirectory,
+          timelineId: workflowTimelineSeed.timelineId
+        }
+      }
+    });
+
+    if (!undoWorkflowCleanup.body.ok) {
+      throw new Error("Undo after workflow-applied smart cleanup failed.");
+    }
+
+    const batchWorkflowStart = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        workflowRun: { id: string };
+      };
+    }>("clawcut.start_batch_workflow", {
+      directory: workflowProjectDirectory,
+      templateId: "batch-caption-export-v1",
+      input: {
+        clipIds: workflowTimelineSeed.clipIds.slice(0, 2),
+        brandKitId: "clawcut-clean",
+        exportSubtitles: true,
+        exportVideo: false
+      }
+    });
+
+    if (
+      !batchWorkflowStart.response.ok ||
+      !batchWorkflowStart.response.data.result.ok ||
+      batchWorkflowStart.response.data.result.commandType !== "StartBatchWorkflow"
+    ) {
+      throw new Error("Batch caption workflow did not start through the OpenClaw boundary.");
+    }
+
+    const completedBatchWorkflow = await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      batchWorkflowStart.response.data.result.workflowRun.id,
+      ["completed", "failed"]
+    );
+
+    if (
+      completedBatchWorkflow.status !== "completed" ||
+      completedBatchWorkflow.batchItems.length < 2 ||
+      !completedBatchWorkflow.batchItems.every((item) => item.status === "completed")
+    ) {
+      throw new Error("Batch workflow did not complete successfully for multiple clips.");
+    }
+
     await page.screenshot({
-      path: resolve(screenshotDirectory, "clawcut-stage8-smoke.png"),
+      path: resolve(screenshotDirectory, "clawcut-stage9-smoke.png"),
       fullPage: true
     });
   } finally {
     await electronApp.close();
     rmSync(projectDirectory, { recursive: true, force: true });
+    rmSync(workflowProjectDirectory, { recursive: true, force: true });
     rmSync(importDirectory, { recursive: true, force: true });
   }
 }

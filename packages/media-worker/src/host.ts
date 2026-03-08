@@ -14,6 +14,8 @@ import type {
   ExecuteEditorCommandResult,
   ExecuteSmartCommandInput,
   ExecuteSmartCommandResult,
+  ExecuteWorkflowCommandInput,
+  ExecuteWorkflowCommandResult,
   ExportSessionSnapshot,
   EditorSessionSnapshot,
   GetProjectSnapshotInput,
@@ -32,7 +34,9 @@ import type {
   ProjectWorkspaceSnapshot,
   GetCaptionSessionSnapshotInput,
   GetSmartSessionSnapshotInput,
+  GetWorkflowSessionSnapshotInput,
   SmartSessionSnapshot,
+  WorkflowSessionSnapshot,
   ToolchainStatus
 } from "@clawcut/ipc";
 
@@ -66,6 +70,7 @@ export class MediaWorkerHostError extends Error {
 export interface CreateMediaWorkerHostOptions {
   workspaceRoot?: string;
   workerEntryPath?: string;
+  userDataPath?: string;
 }
 
 export interface MediaWorkerLaunchConfig {
@@ -107,6 +112,11 @@ export function resolveMediaWorkerLaunchConfig(
   ];
   const nodePath = [...packageNodePaths, process.env.NODE_PATH].filter(Boolean).join(delimiter);
   const explicitEntryPath = options.workerEntryPath;
+  const extraEnv = options.userDataPath
+    ? {
+        CLAWCUT_USER_DATA_PATH: options.userDataPath
+      }
+    : {};
 
   if (explicitEntryPath) {
     return isTypeScriptWorkerEntry(explicitEntryPath)
@@ -116,6 +126,7 @@ export function resolveMediaWorkerLaunchConfig(
           execArgv: ["--import", "tsx"],
           env: {
             ...process.env,
+            ...extraEnv,
             NODE_PATH: nodePath
           }
         }
@@ -124,6 +135,7 @@ export function resolveMediaWorkerLaunchConfig(
           execPath: resolveNodeBinary(),
           env: {
             ...process.env,
+            ...extraEnv,
             NODE_PATH: nodePath
           }
         };
@@ -144,6 +156,7 @@ export function resolveMediaWorkerLaunchConfig(
       execPath: resolveNodeBinary(),
       env: {
         ...process.env,
+        ...extraEnv,
         NODE_PATH: nodePath
       }
     };
@@ -155,6 +168,7 @@ export function resolveMediaWorkerLaunchConfig(
     execArgv: ["--import", "tsx"],
     env: {
       ...process.env,
+      ...extraEnv,
       NODE_PATH: nodePath
     }
   };
@@ -299,6 +313,16 @@ export function createMediaWorkerHost(
       input: ExecuteSmartCommandInput
     ): Promise<ExecuteSmartCommandResult> {
       return invoke("executeSmartCommand", input);
+    },
+    getWorkflowSessionSnapshot(
+      input: GetWorkflowSessionSnapshotInput
+    ): Promise<WorkflowSessionSnapshot> {
+      return invoke("getWorkflowSessionSnapshot", input);
+    },
+    executeWorkflowCommand(
+      input: ExecuteWorkflowCommandInput
+    ): Promise<ExecuteWorkflowCommandResult> {
+      return invoke("executeWorkflowCommand", input);
     },
     pickImportPaths(): Promise<PickImportPathsResult> {
       throw new Error("pickImportPaths is handled in the Electron main process.");

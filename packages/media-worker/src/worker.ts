@@ -7,10 +7,12 @@ import {
   handleExecuteExportCommand,
   handleExecuteEditorCommand,
   handleExecuteSmartCommand,
+  handleExecuteWorkflowCommand,
   handleGetCaptionSessionSnapshot,
   handleGetExportSessionSnapshot,
   handleGetEditorSessionSnapshot,
   handleGetSmartSessionSnapshot,
+  handleGetWorkflowSessionSnapshot,
   handleGetProjectSnapshot,
   handleImportMediaPaths,
   handleOpenProject,
@@ -47,6 +49,10 @@ async function dispatchRequest(message: WorkerRequest): Promise<unknown> {
       return handleGetSmartSessionSnapshot(message.payload);
     case "executeSmartCommand":
       return handleExecuteSmartCommand(message.payload);
+    case "getWorkflowSessionSnapshot":
+      return handleGetWorkflowSessionSnapshot(message.payload);
+    case "executeWorkflowCommand":
+      return handleExecuteWorkflowCommand(message.payload);
     case "pickImportPaths":
       throw new Error("pickImportPaths must be handled in the Electron main process.");
     case "importMediaPaths":

@@ -6,8 +6,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   createEmptyProjectDocument,
+  getBuiltInBrandKits,
   getBuiltInCaptionTemplates,
   getBuiltInExportPresets,
+  getBuiltInWorkflowTemplates,
   type Job
 } from "@clawcut/domain";
 import type { PreviewBridge } from "./preview-bridge";
@@ -329,12 +331,150 @@ function createFakeSnapshots(directory: string) {
     lastError: null
   } as const;
 
+  const workflowSession = {
+    directory,
+    projectName: document.project.name,
+    workflows: getBuiltInWorkflowTemplates(),
+    brandKits: getBuiltInBrandKits(),
+    workflowRuns: [
+      {
+        id: "workflow-run-1",
+        templateId: "smart-cleanup-v1",
+        templateVersion: 1,
+        projectDirectory: directory,
+        status: "waiting-approval",
+        parentJobId: "job-workflow-1",
+        input: {
+          clipId: "clip-1",
+          requireApproval: true
+        },
+        safetyProfile: {
+          highestSafetyClass: "high-impact",
+          hasMutatingSteps: true,
+          hasHighImpactSteps: true,
+          requiresApproval: true
+        },
+        warnings: [],
+        error: null,
+        createdAt,
+        updatedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: null,
+        steps: [
+          {
+            id: "workflow-step-1",
+            workflowRunId: "workflow-run-1",
+            batchItemRunId: null,
+            definitionId: "compile-plan",
+            kind: "compileSmartPlan",
+            name: "Compile edit plan",
+            status: "completed",
+            safetyClass: "mutating",
+            mutability: "write",
+            execution: "sync",
+            requiresApproval: false,
+            childJobId: null,
+            warnings: [],
+            outputSummary: {
+              planId: "plan-1"
+            },
+            error: null,
+            createdAt,
+            updatedAt: createdAt,
+            startedAt: createdAt,
+            completedAt: createdAt
+          },
+          {
+            id: "workflow-step-2",
+            workflowRunId: "workflow-run-1",
+            batchItemRunId: null,
+            definitionId: "approval-before-apply",
+            kind: "approvalCheckpoint",
+            name: "Approval before apply",
+            status: "waiting-approval",
+            safetyClass: "high-impact",
+            mutability: "write",
+            execution: "sync",
+            requiresApproval: true,
+            childJobId: null,
+            warnings: [],
+            outputSummary: {},
+            error: null,
+            createdAt,
+            updatedAt: createdAt,
+            startedAt: createdAt,
+            completedAt: null
+          }
+        ],
+        batchItems: [],
+        approvals: [
+          {
+            id: "workflow-approval-1",
+            workflowRunId: "workflow-run-1",
+            stepRunId: "workflow-step-2",
+            batchItemRunId: null,
+            status: "pending",
+            reason: "Smart cleanup needs explicit approval before applying edits.",
+            summary: "Apply a reviewed smart edit plan",
+            proposedEffects: ["Ripple delete one silence span"],
+            artifactIds: ["workflow-artifact-1"],
+            createdAt,
+            updatedAt: createdAt,
+            resolvedAt: null
+          }
+        ],
+        artifacts: [
+          {
+            id: "workflow-artifact-1",
+            workflowRunId: "workflow-run-1",
+            stepRunId: "workflow-step-1",
+            batchItemRunId: null,
+            kind: "edit-plan",
+            label: "Smart cleanup plan",
+            path: join(directory, ".clawcut", "workflows", "workflow-run-1", "plan-1.json"),
+            metadata: {
+              planId: "plan-1"
+            },
+            createdAt
+          }
+        ],
+        summary: {
+          completedStepCount: 1,
+          totalStepCount: 2,
+          completedBatchItemCount: 0,
+          totalBatchItemCount: 0,
+          failedBatchItemCount: 0,
+          waitingApprovalCount: 1
+        }
+      }
+    ],
+    pendingApprovals: [
+      {
+        id: "workflow-approval-1",
+        workflowRunId: "workflow-run-1",
+        stepRunId: "workflow-step-2",
+        batchItemRunId: null,
+        status: "pending",
+        reason: "Smart cleanup needs explicit approval before applying edits.",
+        summary: "Apply a reviewed smart edit plan",
+        proposedEffects: ["Ripple delete one silence span"],
+        artifactIds: ["workflow-artifact-1"],
+        createdAt,
+        updatedAt: createdAt,
+        resolvedAt: null
+      }
+    ],
+    activeWorkflowJobId: "job-workflow-1",
+    lastError: null
+  } as const;
+
   return {
     workspaceSnapshot,
     editorSnapshot,
     exportSession,
     captionSession,
-    smartSession
+    smartSession,
+    workflowSession
   };
 }
 
@@ -439,6 +579,23 @@ function createFakeWorker(directory: string, snapshots = createFakeSnapshots(dir
                 suggestionSetId: "suggestion-set-1",
                 suggestion: snapshots.smartSession.suggestionSets[0].items[0]
               }
+    })),
+    getWorkflowSessionSnapshot: vi.fn(async () => snapshots.workflowSession),
+    executeWorkflowCommand: vi.fn(async (input: { command: { type: string } }) => ({
+      snapshot: snapshots.workflowSession,
+      result:
+        input.command.type === "StartWorkflow"
+          ? {
+              ok: true,
+              commandType: "StartWorkflow" as const,
+              workflowRun: snapshots.workflowSession.workflowRuns[0],
+              queued: true
+            }
+          : {
+              ok: true,
+              commandType: "ApproveWorkflowStep" as const,
+              workflowRun: snapshots.workflowSession.workflowRuns[0]
+            }
     }))
   };
 }
@@ -899,6 +1056,46 @@ describe.sequential("LocalApiController", () => {
         }
       }
     });
+    const workflowSession = await requestJson<{
+      ok: true;
+      data: {
+        workflows: Array<{ id: string }>;
+        workflowRuns: Array<{ id: string; status: string }>;
+        pendingApprovals: Array<{ id: string }>;
+      };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "workflow.session",
+        input: {
+          directory: started.directory
+        }
+      }
+    });
+    const workflowStart = await requestJson<{
+      ok: true;
+      data: {
+        result: {
+          ok: true;
+          commandType: string;
+          workflowRun: { id: string };
+        };
+      };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "workflow.start",
+        input: {
+          directory: started.directory,
+          templateId: "captioned-export-v1",
+          input: {
+            clipId: "clip-1"
+          }
+        }
+      }
+    });
 
     expect(openProject.status).toBe(200);
     expect(openProject.body.data.directory).toBe(started.directory);
@@ -918,6 +1115,10 @@ describe.sequential("LocalApiController", () => {
     expect(smartPreviewSeek.body.data.positionUs).toBe(700_000);
     expect(smartPreviewSeek.body.data.loadedTimeline).toBe(false);
     expect(smartPreviewSeek.body.data.preview.commandType).toBe("SeekPreview");
+    expect(workflowSession.body.data.workflows.some((workflow) => workflow.id === "smart-cleanup-v1")).toBe(true);
+    expect(workflowSession.body.data.workflowRuns[0]?.id).toBe("workflow-run-1");
+    expect(workflowSession.body.data.pendingApprovals[0]?.id).toBe("workflow-approval-1");
+    expect(workflowStart.body.data.result.commandType).toBe("StartWorkflow");
     expect(started.worker.openProject).toHaveBeenCalledWith({ directory: started.directory });
     expect(started.worker.getEditorSessionSnapshot).toHaveBeenCalledWith({
       directory: started.directory
@@ -926,6 +1127,8 @@ describe.sequential("LocalApiController", () => {
     expect(started.worker.executeCaptionCommand).toHaveBeenCalled();
     expect(started.worker.getSmartSessionSnapshot).toHaveBeenCalled();
     expect(started.worker.executeSmartCommand).toHaveBeenCalled();
+    expect(started.worker.getWorkflowSessionSnapshot).toHaveBeenCalled();
+    expect(started.worker.executeWorkflowCommand).toHaveBeenCalled();
     expect(started.preview.executeCommand).toHaveBeenCalledWith({
       type: "SeekPreview",
       positionUs: 700_000
@@ -1037,7 +1240,8 @@ describe.sequential("LocalApiController", () => {
 
     const chunk = await readEventStreamChunk(response, [
       "event: ready",
-      "event: jobs.snapshot"
+      "event: jobs.snapshot",
+      "\"workflows\""
     ]);
 
     expect(chunk).toContain("event: ready");
@@ -1045,5 +1249,6 @@ describe.sequential("LocalApiController", () => {
     expect(chunk).toContain("job-export-1");
     expect(chunk).toContain("transcription-run-1");
     expect(chunk).toContain("suggestion-set-1");
+    expect(chunk).toContain("workflow-run-1");
   });
 });

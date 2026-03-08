@@ -27,7 +27,7 @@ import { PROJECT_PREVIEW_DEFAULT_MODES, type ProjectPreviewDefaultMode } from ".
 import { DEFAULT_EXPORT_PRESET_ID, EXPORT_PRESET_IDS, type ExportPresetId } from "./render";
 import { createEmptyTimeline, timelineSchema, type Timeline } from "./timeline";
 
-export const PROJECT_SCHEMA_VERSION = 5;
+export const PROJECT_SCHEMA_VERSION = 6;
 export const PROJECT_FILE_NAME = "clawcut.project.json";
 export const PROJECT_CACHE_DIRECTORY = ".clawcut";
 export const PROJECT_DATABASE_NAME = "project.db";
@@ -107,6 +107,12 @@ export interface ProjectSettingsV2 {
   };
 }
 
+export interface ProjectSettingsV3 extends ProjectSettingsV2 {
+  branding: {
+    defaultBrandKitId: string | null;
+  };
+}
+
 export interface ProjectLibraryV2 {
   items: MediaItem[];
 }
@@ -156,7 +162,7 @@ export interface ProjectDocumentLegacyV4 {
 }
 
 export interface ProjectDocumentV5 {
-  schemaVersion: typeof PROJECT_SCHEMA_VERSION;
+  schemaVersion: 5;
   project: ProjectIdentity;
   settings: ProjectSettingsV2;
   library: ProjectLibraryV2;
@@ -165,9 +171,19 @@ export interface ProjectDocumentV5 {
   captions: CaptionCollection;
 }
 
-export type ProjectDocumentV3 = ProjectDocumentV5;
+export interface ProjectDocumentV6 {
+  schemaVersion: typeof PROJECT_SCHEMA_VERSION;
+  project: ProjectIdentity;
+  settings: ProjectSettingsV3;
+  library: ProjectLibraryV2;
+  timeline: Timeline;
+  transcripts: TranscriptCollection;
+  captions: CaptionCollection;
+}
+
+export type ProjectDocumentV3 = ProjectDocumentV6;
 export type ProjectDocumentV4Legacy = ProjectDocumentV4;
-export type ProjectDocument = ProjectDocumentV5;
+export type ProjectDocument = ProjectDocumentV6;
 
 const projectMediaReferenceSchema = z.object({
   id: z.string().min(1),
@@ -234,6 +250,12 @@ const settingsSchemaV2 = z.object({
   })
 });
 
+const settingsSchemaV3 = settingsSchemaV2.extend({
+  branding: z.object({
+    defaultBrandKitId: z.string().min(1).nullable()
+  })
+});
+
 const settingsSchemaV2Migrating = z.object({
   ingest: z.object({
     proxyPreset: z.literal("stage2-standard-proxy")
@@ -292,9 +314,19 @@ const projectDocumentSchemaV4 = z.object({
 });
 
 const projectDocumentSchemaV5 = z.object({
-  schemaVersion: z.literal(PROJECT_SCHEMA_VERSION),
+  schemaVersion: z.literal(5),
   project: identitySchema,
   settings: settingsSchemaV2,
+  library: librarySchema,
+  timeline: timelineSchema,
+  transcripts: transcriptCollectionSchema,
+  captions: captionCollectionSchema
+});
+
+const projectDocumentSchemaV6 = z.object({
+  schemaVersion: z.literal(PROJECT_SCHEMA_VERSION),
+  project: identitySchema,
+  settings: settingsSchemaV3,
   library: librarySchema,
   timeline: timelineSchema,
   transcripts: transcriptCollectionSchema,
@@ -339,6 +371,12 @@ function migrateLegacyCaptionTemplate(
   return templateId;
 }
 
+function createDefaultBrandingSettings(): ProjectSettingsV3["branding"] {
+  return {
+    defaultBrandKitId: null
+  };
+}
+
 export function createMediaItemFromLegacyReference(
   mediaReference: ProjectMediaReferenceV1
 ): MediaItem {
@@ -369,7 +407,7 @@ export function createMediaItemFromLegacyReference(
   };
 }
 
-export function createEmptyProjectDocument(projectName: string): ProjectDocumentV5 {
+export function createEmptyProjectDocument(projectName: string): ProjectDocumentV6 {
   const timestamp = nowIso();
 
   return {
@@ -392,6 +430,9 @@ export function createEmptyProjectDocument(projectName: string): ProjectDocument
       },
       exports: {
         defaultPreset: DEFAULT_EXPORT_PRESET_ID
+      },
+      branding: {
+        defaultBrandKitId: null
       }
     },
     library: {
@@ -432,7 +473,7 @@ export function migrateProjectDocumentV1(
 
 export function migrateProjectDocumentV2(
   legacyDocument: ProjectDocumentV2
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     project: legacyDocument.project,
@@ -443,7 +484,8 @@ export function migrateProjectDocumentV2(
       },
       exports: {
         defaultPreset: migrateLegacyExportPreset(legacyDocument.settings.exports.defaultPreset)
-      }
+      },
+      branding: createDefaultBrandingSettings()
     },
     library: legacyDocument.library,
     timeline: createEmptyTimeline(legacyDocument.timeline.id),
@@ -454,7 +496,7 @@ export function migrateProjectDocumentV2(
 
 export function migrateProjectDocumentV3(
   legacyDocument: ProjectDocumentLegacyV3
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     project: legacyDocument.project,
@@ -465,7 +507,8 @@ export function migrateProjectDocumentV3(
       },
       exports: {
         defaultPreset: migrateLegacyExportPreset(legacyDocument.settings.exports.defaultPreset)
-      }
+      },
+      branding: createDefaultBrandingSettings()
     },
     library: legacyDocument.library,
     timeline: legacyDocument.timeline,
@@ -476,7 +519,7 @@ export function migrateProjectDocumentV3(
 
 export function migrateProjectDocumentV4(
   legacyDocument: ProjectDocumentLegacyV4
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     project: legacyDocument.project,
@@ -484,7 +527,8 @@ export function migrateProjectDocumentV4(
       ...legacyDocument.settings,
       captions: {
         defaultTemplate: migrateLegacyCaptionTemplate(legacyDocument.settings.captions.defaultTemplate)
-      }
+      },
+      branding: createDefaultBrandingSettings()
     },
     library: legacyDocument.library,
     timeline: legacyDocument.timeline,
@@ -493,14 +537,28 @@ export function migrateProjectDocumentV4(
   };
 }
 
-export function parseProjectDocument(input: unknown): ProjectDocumentV5 {
+export function migrateProjectDocumentV5(
+  legacyDocument: ProjectDocumentV5
+): ProjectDocumentV6 {
+  return {
+    ...legacyDocument,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    settings: {
+      ...legacyDocument.settings,
+      branding: createDefaultBrandingSettings()
+    }
+  };
+}
+
+export function parseProjectDocument(input: unknown): ProjectDocumentV6 {
   const parsedInput = z
     .union([
       projectDocumentSchemaV1,
       projectDocumentSchemaV2,
       projectDocumentSchemaV3Legacy,
       projectDocumentSchemaV4,
-      projectDocumentSchemaV5
+      projectDocumentSchemaV5,
+      projectDocumentSchemaV6
     ])
     .parse(input);
 
@@ -520,14 +578,18 @@ export function parseProjectDocument(input: unknown): ProjectDocumentV5 {
     return migrateProjectDocumentV4(parsedInput);
   }
 
+  if (parsedInput.schemaVersion === 5) {
+    return migrateProjectDocumentV5(parsedInput);
+  }
+
   return parsedInput;
 }
 
-export function serializeProjectDocument(project: ProjectDocumentV5): string {
+export function serializeProjectDocument(project: ProjectDocumentV6): string {
   return JSON.stringify(project, null, 2);
 }
 
-export function touchProjectDocument(project: ProjectDocumentV5): ProjectDocumentV5 {
+export function touchProjectDocument(project: ProjectDocumentV6): ProjectDocumentV6 {
   return {
     ...project,
     project: {
@@ -538,9 +600,9 @@ export function touchProjectDocument(project: ProjectDocumentV5): ProjectDocumen
 }
 
 export function upsertMediaItem(
-  project: ProjectDocumentV5,
+  project: ProjectDocumentV6,
   mediaItem: MediaItem
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   const nextProject = touchProjectDocument(project);
   const withoutExisting = nextProject.library.items.filter((asset) => asset.id !== mediaItem.id);
 
@@ -553,9 +615,9 @@ export function upsertMediaItem(
 }
 
 export function replaceProjectTimeline(
-  project: ProjectDocumentV5,
+  project: ProjectDocumentV6,
   timeline: Timeline
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   return touchProjectDocument({
     ...project,
     timeline
@@ -563,9 +625,9 @@ export function replaceProjectTimeline(
 }
 
 export function upsertTranscript(
-  project: ProjectDocumentV5,
+  project: ProjectDocumentV6,
   transcript: Transcript
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   const nextProject = touchProjectDocument(project);
   const items = nextProject.transcripts.items.filter((entry) => entry.id !== transcript.id);
 
@@ -578,9 +640,9 @@ export function upsertTranscript(
 }
 
 export function upsertCaptionTrack(
-  project: ProjectDocumentV5,
+  project: ProjectDocumentV6,
   captionTrack: CaptionTrack
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   const nextProject = touchProjectDocument(project);
   const tracks = nextProject.captions.tracks.filter((entry) => entry.id !== captionTrack.id);
 
@@ -594,9 +656,9 @@ export function upsertCaptionTrack(
 }
 
 export function setCaptionExportDefaults(
-  project: ProjectDocumentV5,
+  project: ProjectDocumentV6,
   exportDefaults: Partial<CaptionExportDefaults>
-): ProjectDocumentV5 {
+): ProjectDocumentV6 {
   const nextProject = touchProjectDocument(project);
 
   return {
@@ -606,6 +668,23 @@ export function setCaptionExportDefaults(
       exportDefaults: {
         ...(nextProject.captions.exportDefaults ?? createDefaultCaptionExportDefaults()),
         ...exportDefaults
+      }
+    }
+  };
+}
+
+export function setDefaultBrandKitId(
+  project: ProjectDocumentV6,
+  brandKitId: string | null
+): ProjectDocumentV6 {
+  const nextProject = touchProjectDocument(project);
+
+  return {
+    ...nextProject,
+    settings: {
+      ...nextProject.settings,
+      branding: {
+        defaultBrandKitId: brandKitId
       }
     }
   };

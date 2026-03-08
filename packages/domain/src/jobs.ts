@@ -13,6 +13,7 @@ export type JobType =
   | "transcription"
   | "export"
   | "analysis"
+  | "workflow"
   | "preview-cache";
 
 export interface JobProgress {
@@ -80,7 +81,20 @@ export interface SmartAnalysisJob extends JobBase {
   suggestionSetId: string | null;
 }
 
-export type Job = IngestJob | DerivedAssetJob | ExportJob | TranscriptionJob | SmartAnalysisJob;
+export interface WorkflowJob extends JobBase {
+  kind: "workflow";
+  workflowRunId: string;
+  templateId: string;
+  childJobIds: string[];
+}
+
+export type Job =
+  | IngestJob
+  | DerivedAssetJob
+  | ExportJob
+  | TranscriptionJob
+  | SmartAnalysisJob
+  | WorkflowJob;
 
 export type MediaJobStatus = JobState;
 export type MediaJobKind = "ingest" | DerivedAssetType;

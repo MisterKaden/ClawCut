@@ -104,3 +104,15 @@ export function resolveSmartArtifactDirectory(
     relativePath: relative(paths.directory, absolutePath).replace(/\\/gu, "/")
   };
 }
+
+export function resolveWorkflowArtifactDirectory(
+  paths: ProjectPaths,
+  workflowRunId: string
+): CachePathDescriptor {
+  const absolutePath = join(paths.directory, PROJECT_CACHE_DIRECTORY, "workflows", workflowRunId);
+
+  return {
+    absolutePath,
+    relativePath: relative(paths.directory, absolutePath).replace(/\\/gu, "/")
+  };
+}

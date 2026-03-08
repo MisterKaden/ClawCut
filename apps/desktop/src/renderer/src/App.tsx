@@ -1,6 +1,7 @@
 import { startTransition, useEffect, useEffectEvent, useState } from "react";
 
 import type {
+  BrandKit,
   CaptionCommand,
   DerivedAsset,
   EditorCommand,
@@ -10,6 +11,7 @@ import type {
   SmartCommand,
   SmartSuggestionItem,
   TranscriptionOptions,
+  WorkflowCommand,
   WaveformAsset
 } from "@clawcut/domain";
 import { getTimelineEndUs } from "@clawcut/domain";
@@ -23,7 +25,9 @@ import type {
   ExecuteExportCommandResult,
   ExecuteSmartCommandResult,
   SmartSessionSnapshot,
-  ToolchainStatus
+  ToolchainStatus,
+  WorkflowSessionSnapshot,
+  ExecuteWorkflowCommandResult
 } from "@clawcut/ipc";
 
 import { CaptionPanel } from "./caption-panel";
@@ -32,6 +36,7 @@ import { createPreviewLoadTarget, previewController } from "./preview-controller
 import { PreviewPanel } from "./preview-panel";
 import { SmartPanel } from "./smart-panel";
 import { TimelineEditor } from "./timeline-editor";
+import { WorkflowPanel } from "./workflow-panel";
 
 interface OperationState {
   kind: "idle" | "working" | "error";
@@ -266,6 +271,7 @@ export function App() {
   const [exportSnapshot, setExportSnapshot] = useState<ExportSessionSnapshot | null>(null);
   const [captionSnapshot, setCaptionSnapshot] = useState<CaptionSessionSnapshot | null>(null);
   const [smartSnapshot, setSmartSnapshot] = useState<SmartSessionSnapshot | null>(null);
+  const [workflowSnapshot, setWorkflowSnapshot] = useState<WorkflowSessionSnapshot | null>(null);
   const [selectedExportPresetId, setSelectedExportPresetId] = useState<ExportPresetId | null>(null);
   const [selectedExportTargetKey, setSelectedExportTargetKey] = useState("timeline");
   const [customRangeStartSeconds, setCustomRangeStartSeconds] = useState("0");
@@ -300,6 +306,7 @@ export function App() {
       setExportSnapshot(null);
       setCaptionSnapshot(null);
       setSmartSnapshot(null);
+      setWorkflowSnapshot(null);
       setSelectedExportPresetId(null);
       setSelectedExportTargetKey("timeline");
       setCustomRangeStartSeconds("0");
@@ -429,6 +436,14 @@ export function App() {
     }
   });
 
+  const refreshWorkflowSnapshotSilently = useEffectEvent(async (directory: string) => {
+    try {
+      await loadWorkflowSession(directory);
+    } catch {
+      // Keep the visible state stable during background polling.
+    }
+  });
+
   useEffect(() => {
     if (!snapshot) {
       return;
@@ -484,6 +499,20 @@ export function App() {
       window.clearInterval(intervalId);
     };
   }, [refreshSmartSnapshotSilently, smartSnapshot]);
+
+  useEffect(() => {
+    if (!workflowSnapshot) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshWorkflowSnapshotSilently(workflowSnapshot.directory);
+    }, 1_250);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshWorkflowSnapshotSilently, workflowSnapshot]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -550,6 +579,14 @@ export function App() {
     return nextSmartSnapshot;
   }
 
+  async function loadWorkflowSession(directory: string): Promise<WorkflowSessionSnapshot> {
+    const nextWorkflowSnapshot = await window.clawcut.getWorkflowSessionSnapshot({ directory });
+    startTransition(() => {
+      setWorkflowSnapshot(nextWorkflowSnapshot);
+    });
+    return nextWorkflowSnapshot;
+  }
+
   async function withOperation<T>(
     message: string,
     task: () => Promise<T>
@@ -592,7 +629,8 @@ export function App() {
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
-      loadSmartSession(result.directory)
+      loadSmartSession(result.directory),
+      loadWorkflowSession(result.directory)
     ]);
   }
 
@@ -612,7 +650,8 @@ export function App() {
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
-      loadSmartSession(result.directory)
+      loadSmartSession(result.directory),
+      loadWorkflowSession(result.directory)
     ]);
   }
 
@@ -641,7 +680,8 @@ export function App() {
       loadEditorSession(result.snapshot.directory),
       loadExportSession(result.snapshot.directory),
       loadCaptionSession(result.snapshot.directory),
-      loadSmartSession(result.snapshot.directory)
+      loadSmartSession(result.snapshot.directory),
+      loadWorkflowSession(result.snapshot.directory)
     ]);
   }
 
@@ -676,7 +716,8 @@ export function App() {
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
-      loadSmartSession(result.directory)
+      loadSmartSession(result.directory),
+      loadWorkflowSession(result.directory)
     ]);
   }
 
@@ -700,7 +741,8 @@ export function App() {
       loadEditorSession(result.directory),
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
-      loadSmartSession(result.directory)
+      loadSmartSession(result.directory),
+      loadWorkflowSession(result.directory)
     ]);
   }
 
@@ -737,7 +779,8 @@ export function App() {
       loadEditorSession(result.snapshot.directory),
       loadExportSession(result.snapshot.directory),
       loadCaptionSession(result.snapshot.directory),
-      loadSmartSession(result.snapshot.directory)
+      loadSmartSession(result.snapshot.directory),
+      loadWorkflowSession(result.snapshot.directory)
     ]);
   }
 
@@ -850,6 +893,39 @@ export function App() {
     ) {
       await loadEditorSession(snapshot.directory);
     }
+
+    return result;
+  }
+
+  async function handleExecuteWorkflowCommand(
+    command: WorkflowCommand,
+    message: string
+  ): Promise<ExecuteWorkflowCommandResult | null> {
+    if (!snapshot) {
+      return null;
+    }
+
+    const result = await withOperation(message, async () =>
+      window.clawcut.executeWorkflowCommand({
+        directory: snapshot.directory,
+        command
+      })
+    );
+
+    if (!result) {
+      return null;
+    }
+
+    startTransition(() => {
+      setWorkflowSnapshot(result.snapshot);
+    });
+
+    await Promise.all([
+      loadEditorSession(snapshot.directory),
+      loadExportSession(snapshot.directory),
+      loadCaptionSession(snapshot.directory),
+      loadSmartSession(snapshot.directory)
+    ]);
 
     return result;
   }
@@ -1054,12 +1130,12 @@ export function App() {
         <div className="hero__masthead">
           <div>
             <p className="eyebrow">Clawcut / Stage 8 smart editing foundations</p>
-            <h1>Review explainable edit suggestions, preview them, and apply them through the same trusted command engine.</h1>
+            <h1>Package trusted editing, captions, exports, and smart analysis into reusable workflows with explicit approvals.</h1>
             <p className="lede">
-              Stage 8 adds smart analysis without handing control to opaque automation. Silence,
-              filler, weak-segment, and highlight analyzers now produce structured suggestion sets,
-              dry-run edit plans, and explicit apply steps that still route through Clawcut’s
-              command engine, undo history, and OpenClaw-safe control surface.
+              Stage 9 turns Clawcut’s lower-level media, caption, export, and smart-analysis
+              primitives into resumable workflow runs, brand-aware presets, approval checkpoints,
+              and batch-safe automation that still stays grounded in the same typed command
+              system.
             </p>
           </div>
 
@@ -1750,6 +1826,106 @@ export function App() {
         selectedTargetKey={selectedExportTargetKey}
         selectedPresetId={selectedExportPresetId}
         snapshot={snapshot}
+      />
+
+      <WorkflowPanel
+        captionSnapshot={captionSnapshot}
+        exportSnapshot={exportSnapshot}
+        onApproveWorkflowStep={(workflowRunId, approvalId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "ApproveWorkflowStep",
+              workflowRunId,
+              approvalId
+            },
+            "Approving workflow step…"
+          )
+        }
+        onCancelWorkflowRun={(workflowRunId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "CancelWorkflowRun",
+              workflowRunId
+            },
+            "Cancelling workflow run…"
+          )
+        }
+        onCreateBrandKit={(brandKit: BrandKit) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "CreateBrandKit",
+              brandKit
+            },
+            "Creating brand kit…"
+          )
+        }
+        onRejectWorkflowStep={(workflowRunId, approvalId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "RejectWorkflowStep",
+              workflowRunId,
+              approvalId
+            },
+            "Rejecting workflow step…"
+          )
+        }
+        onResumeWorkflowRun={(workflowRunId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "ResumeWorkflowRun",
+              workflowRunId
+            },
+            "Resuming workflow run…"
+          )
+        }
+        onRetryWorkflowStep={(workflowRunId, stepRunId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "RetryWorkflowStep",
+              workflowRunId,
+              stepRunId
+            },
+            "Retrying workflow step…"
+          )
+        }
+        onSetDefaultBrandKit={(brandKitId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "SetDefaultBrandKit",
+              brandKitId
+            },
+            brandKitId ? "Setting default brand kit…" : "Clearing default brand kit…"
+          )
+        }
+        onStartWorkflow={(templateId, input, batch) =>
+          void handleExecuteWorkflowCommand(
+            batch && templateId === "batch-caption-export-v1"
+              ? {
+                  type: "StartBatchWorkflow",
+                  templateId: "batch-caption-export-v1",
+                  input
+                }
+              : {
+                  type: "StartWorkflow",
+                  templateId,
+                  input
+                },
+            batch ? "Starting batch workflow…" : "Starting workflow…"
+          )
+        }
+        onUpdateBrandKit={(brandKitId, brandKit: BrandKit) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "UpdateBrandKit",
+              brandKitId,
+              brandKit
+            },
+            "Updating brand kit…"
+          )
+        }
+        selectedClipId={selectedClipId}
+        snapshot={snapshot}
+        workflowSnapshot={workflowSnapshot}
       />
 
       <section className="jobs-panel" data-testid="job-strip">

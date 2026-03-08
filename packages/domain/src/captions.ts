@@ -35,6 +35,18 @@ export type CaptionAlignment = (typeof CAPTION_ALIGNMENTS)[number];
 export type CaptionLineBreakMode = (typeof CAPTION_LINE_BREAK_MODES)[number];
 export type CaptionActiveWordStyle = (typeof CAPTION_ACTIVE_WORD_STYLES)[number];
 
+export interface CaptionStyleOverrides {
+  placement?: CaptionPlacement;
+  alignment?: CaptionAlignment;
+  fontFamilyIntent?: "sans" | "display" | "serif";
+  fontScale?: "small" | "medium" | "large" | "hero";
+  fontWeight?: 500 | 600 | 700 | 800;
+  textColor?: string;
+  accentColor?: string;
+  backgroundStyle?: "none" | "boxed" | "card" | "highlight";
+  activeWordStyle?: CaptionActiveWordStyle;
+}
+
 export interface TranscriptionOptions {
   language: string | null;
   model: TranscriptionModel;
@@ -141,6 +153,10 @@ export interface CaptionTrack {
   enabled: boolean;
   segmentationStrategy: "transcript-segment";
   exportIntent: CaptionExportIntent;
+  branding: {
+    brandKitId: string | null;
+  };
+  styleOverrides: CaptionStyleOverrides;
   warnings: string[];
   createdAt: string;
   updatedAt: string;
@@ -595,6 +611,18 @@ const captionExportIntentSchema = z.object({
   sidecarFormat: z.enum(SUBTITLE_FORMATS)
 });
 
+const captionStyleOverridesSchema = z.object({
+  placement: z.enum(CAPTION_PLACEMENTS).optional(),
+  alignment: z.enum(CAPTION_ALIGNMENTS).optional(),
+  fontFamilyIntent: z.enum(["sans", "display", "serif"]).optional(),
+  fontScale: z.enum(["small", "medium", "large", "hero"]).optional(),
+  fontWeight: z.union([z.literal(500), z.literal(600), z.literal(700), z.literal(800)]).optional(),
+  textColor: z.string().min(1).optional(),
+  accentColor: z.string().min(1).optional(),
+  backgroundStyle: z.enum(["none", "boxed", "card", "highlight"]).optional(),
+  activeWordStyle: z.enum(CAPTION_ACTIVE_WORD_STYLES).optional()
+});
+
 const captionSegmentSchema = z.object({
   id: z.string().min(1),
   index: z.number().int().nonnegative(),
@@ -622,6 +650,12 @@ export const captionTrackSchema = z.object({
   enabled: z.boolean(),
   segmentationStrategy: z.literal("transcript-segment"),
   exportIntent: captionExportIntentSchema,
+  branding: z.object({
+    brandKitId: z.string().min(1).nullable()
+  }).default({
+    brandKitId: null
+  }),
+  styleOverrides: captionStyleOverridesSchema.default({}),
   warnings: z.array(z.string()),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -865,6 +899,24 @@ export function createEmptyCaptionCollection(): CaptionCollection {
   };
 }
 
+export function mergeCaptionStyleOverrides(
+  template: CaptionTemplate,
+  overrides: CaptionStyleOverrides
+): CaptionTemplate {
+  return {
+    ...template,
+    placement: overrides.placement ?? template.placement,
+    alignment: overrides.alignment ?? template.alignment,
+    fontFamilyIntent: overrides.fontFamilyIntent ?? template.fontFamilyIntent,
+    fontScale: overrides.fontScale ?? template.fontScale,
+    fontWeight: overrides.fontWeight ?? template.fontWeight,
+    textColor: overrides.textColor ?? template.textColor,
+    accentColor: overrides.accentColor ?? template.accentColor,
+    backgroundStyle: overrides.backgroundStyle ?? template.backgroundStyle,
+    activeWordStyle: overrides.activeWordStyle ?? template.activeWordStyle
+  };
+}
+
 export function createTranscriptFromNormalizedResult(input: {
   id?: string;
   timelineId: string | null;
@@ -1012,6 +1064,10 @@ export function generateCaptionTrackFromTranscript(input: {
       sidecarByDefault: true,
       sidecarFormat: "srt"
     },
+    branding: {
+      brandKitId: null
+    },
+    styleOverrides: {},
     warnings: [...input.transcript.warnings],
     createdAt,
     updatedAt: createdAt,
@@ -1056,6 +1112,10 @@ export function applyCaptionTemplateToTrack(
   return captionTrackSchema.parse({
     ...track,
     templateId,
+    branding: {
+      brandKitId: null
+    },
+    styleOverrides: {},
     updatedAt,
     segments: track.segments.map((segment) => ({
       ...segment,
@@ -1094,7 +1154,71 @@ export function updateCaptionSegmentOnTrack(
             enabled: updates.enabled ?? segment.enabled
           }
         : segment
-    )
+      )
+  });
+}
+
+export function applyCaptionStyleOverridesToTrack(
+  track: CaptionTrack,
+  input: {
+    brandKitId: string | null;
+    templateId?: CaptionTemplateId;
+    styleOverrides: CaptionStyleOverrides;
+  },
+  updatedAt: string = new Date().toISOString()
+): CaptionTrack {
+  const templateId = input.templateId ?? track.templateId;
+  const template = resolveCaptionTemplate(templateId);
+
+  if (!template) {
+    throw new Error(`Caption template ${templateId} is not available.`);
+  }
+
+  const resolvedTemplate = mergeCaptionStyleOverrides(template, input.styleOverrides);
+
+  return captionTrackSchema.parse({
+    ...track,
+    templateId,
+    branding: {
+      brandKitId: input.brandKitId
+    },
+    styleOverrides: {
+      ...input.styleOverrides
+    },
+    updatedAt,
+    segments: track.segments.map((segment) => ({
+      ...segment,
+      templateId,
+      alignment: resolvedTemplate.alignment,
+      placement: resolvedTemplate.placement,
+      activeWordHighlight: resolvedTemplate.activeWordStyle === "highlight",
+      activeWordStyle: resolvedTemplate.activeWordStyle
+    }))
+  });
+}
+
+export function offsetCaptionTrackTiming(
+  track: CaptionTrack,
+  offsetUs: number,
+  updatedAt: string = new Date().toISOString()
+): CaptionTrack {
+  if (offsetUs === 0) {
+    return captionTrackSchema.parse(track);
+  }
+
+  return captionTrackSchema.parse({
+    ...track,
+    updatedAt,
+    segments: track.segments.map((segment) => ({
+      ...segment,
+      startUs: segment.startUs + offsetUs,
+      endUs: segment.endUs + offsetUs,
+      words: segment.words.map((word) => ({
+        ...word,
+        startUs: word.startUs === null ? null : word.startUs + offsetUs,
+        endUs: word.endUs === null ? null : word.endUs + offsetUs
+      }))
+    }))
   });
 }
 
@@ -1211,10 +1335,16 @@ export function formatCaptionTrackAsAss(
   track: CaptionTrack,
   template: CaptionTemplate
 ): string {
-  const margins = resolveAssMargins(template.placement);
-  const fontSize = resolveTemplateFontSize(template.fontScale);
-  const alignment = resolveAssAlignment(template.placement, template.alignment);
-  const hasBox = template.backgroundStyle === "boxed" || template.backgroundStyle === "card";
+  const resolvedTemplate = mergeCaptionStyleOverrides(template, track.styleOverrides);
+  const margins = resolveAssMargins(resolvedTemplate.placement);
+  const fontSize = resolveTemplateFontSize(resolvedTemplate.fontScale);
+  const alignment = resolveAssAlignment(
+    resolvedTemplate.placement,
+    resolvedTemplate.alignment
+  );
+  const hasBox =
+    resolvedTemplate.backgroundStyle === "boxed" ||
+    resolvedTemplate.backgroundStyle === "card";
 
   const header = [
     "[Script Info]",
@@ -1225,7 +1355,7 @@ export function formatCaptionTrackAsAss(
     "",
     "[V4+ Styles]",
     "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-    `Style: Default,Arial,${fontSize},${hexToAssColor(template.textColor)},${hexToAssColor(template.accentColor)},&H00101010,&H64000000,${template.fontWeight >= 700 ? -1 : 0},0,0,0,100,100,0,0,${hasBox ? 3 : 1},2,0,${alignment},${margins.marginL},${margins.marginR},${margins.marginV},1`,
+    `Style: Default,Arial,${fontSize},${hexToAssColor(resolvedTemplate.textColor)},${hexToAssColor(resolvedTemplate.accentColor)},&H00101010,&H64000000,${resolvedTemplate.fontWeight >= 700 ? -1 : 0},0,0,0,100,100,0,0,${hasBox ? 3 : 1},2,0,${alignment},${margins.marginL},${margins.marginR},${margins.marginV},1`,
     "",
     "[Events]",
     "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text"
@@ -1256,7 +1386,11 @@ export function resolveActiveCaptionOverlays(
             segment.enabled && segment.startUs <= playheadUs && playheadUs <= segment.endUs
         )
         .map((segment) => {
-          const template = templatesById[segment.templateId ?? track.templateId] ?? templatesById[track.templateId];
+          const templateId = segment.templateId ?? track.templateId;
+          const template = templatesById[templateId] ?? templatesById[track.templateId];
+          const resolvedTemplate = template
+            ? mergeCaptionStyleOverrides(template, track.styleOverrides)
+            : null;
           const tokens = segment.words.length
             ? segment.words.map((word) => ({
                 id: word.id,
@@ -1284,13 +1418,13 @@ export function resolveActiveCaptionOverlays(
             type: "caption" as const,
             id: segment.id,
             trackId: track.id,
-            templateId: template?.id ?? track.templateId,
+            templateId: resolvedTemplate?.id ?? track.templateId,
             text: segment.text,
-            placement: segment.placement,
-            alignment: segment.alignment,
-            backgroundStyle: template?.backgroundStyle ?? "none",
+            placement: resolvedTemplate?.placement ?? segment.placement,
+            alignment: resolvedTemplate?.alignment ?? segment.alignment,
+            backgroundStyle: resolvedTemplate?.backgroundStyle ?? "none",
             activeWordHighlight: segment.activeWordHighlight,
-            activeWordStyle: segment.activeWordStyle,
+            activeWordStyle: resolvedTemplate?.activeWordStyle ?? segment.activeWordStyle,
             tokens
           };
         })
