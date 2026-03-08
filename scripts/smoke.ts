@@ -10,6 +10,7 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { _electron as electron, type Page } from "playwright";
 import { ClawcutOpenClawClient } from "@clawcut/openclaw-plugin";
@@ -323,11 +324,12 @@ async function waitForWorkflowRunStateViaApi(
   );
 }
 
-async function runSmoke(): Promise<void> {
+export async function runSmoke(): Promise<void> {
   const require = createRequire(import.meta.url);
   const workspaceRoot = resolve(process.cwd());
   const appRoot = resolve(workspaceRoot, "apps/desktop");
-  const electronBinary = require("electron") as string;
+  const packagedExecutable = process.env.CLAWCUT_SMOKE_EXECUTABLE?.trim() || null;
+  const electronBinary = packagedExecutable || (require("electron") as string);
   const mainEntry = resolve(appRoot, "out/main/index.js");
   const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage8-smoke-project-"));
   const workflowProjectDirectory = mkdtempSync(
@@ -352,7 +354,7 @@ async function runSmoke(): Promise<void> {
 
   const electronApp = await electron.launch({
     executablePath: electronBinary,
-    args: [mainEntry],
+    args: packagedExecutable ? [] : [mainEntry],
     cwd: workspaceRoot,
     env: {
       ...process.env,
@@ -2137,4 +2139,9 @@ async function runSmoke(): Promise<void> {
   }
 }
 
-void runSmoke();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void runSmoke().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

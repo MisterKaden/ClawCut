@@ -2,6 +2,7 @@ import type {
   DerivedAssetType,
   ExportMode,
   MediaJobStatus,
+  RecoveryInfo,
   SmartAnalysisType,
   SubtitleFormat
 } from "@clawcut/domain";
@@ -69,5 +70,6 @@ export interface StoredJobRecord {
   createdAt: string;
   updatedAt: string;
   errorMessage: string | null;
+  recovery: RecoveryInfo;
   payload: PersistedJobPayload;
 }

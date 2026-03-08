@@ -5,11 +5,13 @@ import {
   type ClawcutApi,
   type CreateProjectInput,
   type ExecuteCaptionCommandInput,
+  type ExecuteDiagnosticsActionInput,
   type ExecuteExportCommandInput,
   type ExecuteEditorCommandInput,
   type ExecuteSmartCommandInput,
   type ExecuteWorkflowCommandInput,
   type GetCaptionSessionSnapshotInput,
+  type GetDiagnosticsSessionSnapshotInput,
   type GetExportSessionSnapshotInput,
   type GetEditorSessionSnapshotInput,
   type GetProjectSnapshotInput,
@@ -67,6 +69,12 @@ const clawcutApi: ClawcutApi = {
   },
   executeWorkflowCommand(input: ExecuteWorkflowCommandInput) {
     return electron.ipcRenderer.invoke(IPC_CHANNELS.executeWorkflowCommand, input);
+  },
+  getDiagnosticsSessionSnapshot(input: GetDiagnosticsSessionSnapshotInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.getDiagnosticsSessionSnapshot, input);
+  },
+  executeDiagnosticsAction(input: ExecuteDiagnosticsActionInput) {
+    return electron.ipcRenderer.invoke(IPC_CHANNELS.executeDiagnosticsAction, input);
   },
   pickImportPaths(input?: PickImportPathsInput) {
     return electron.ipcRenderer.invoke(IPC_CHANNELS.pickImportPaths, input);

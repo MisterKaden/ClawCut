@@ -1,7 +1,8 @@
-import type {
-  SmartAnalysisRun,
-  SmartEditPlan,
-  SmartSuggestionSet
+import {
+  createEmptyRecoveryInfo,
+  type SmartAnalysisRun,
+  type SmartEditPlan,
+  type SmartSuggestionSet
 } from "@clawcut/domain";
 
 import { openProjectDatabase } from "./sqlite";
@@ -21,6 +22,7 @@ interface SmartAnalysisRunRow {
   started_at: string | null;
   completed_at: string | null;
   retry_of_run_id: string | null;
+  recovery_json?: string;
 }
 
 interface SmartSuggestionSetRow {
@@ -63,6 +65,9 @@ function rowToAnalysisRun(row: SmartAnalysisRunRow): SmartAnalysisRun {
     status: row.status,
     diagnostics: JSON.parse(row.diagnostics_json) as SmartAnalysisRun["diagnostics"],
     error: row.error_json ? (JSON.parse(row.error_json) as SmartAnalysisRun["error"]) : null,
+    recovery: row.recovery_json
+      ? (JSON.parse(row.recovery_json) as SmartAnalysisRun["recovery"])
+      : createEmptyRecoveryInfo(),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     startedAt: row.started_at,
@@ -123,7 +128,8 @@ export function listSmartAnalysisRuns(databasePath: string): SmartAnalysisRun[] 
           updated_at,
           started_at,
           completed_at,
-          retry_of_run_id
+          retry_of_run_id,
+          recovery_json
         FROM smart_analysis_runs
         ORDER BY created_at DESC
       `
@@ -159,7 +165,8 @@ export function getSmartAnalysisRun(
           updated_at,
           started_at,
           completed_at,
-          retry_of_run_id
+          retry_of_run_id,
+          recovery_json
         FROM smart_analysis_runs
         WHERE id = ?
       `
@@ -195,7 +202,8 @@ export function createSmartAnalysisRunRecord(
           updated_at,
           started_at,
           completed_at,
-          retry_of_run_id
+          retry_of_run_id,
+          recovery_json
         ) VALUES (
           @id,
           @job_id,
@@ -209,7 +217,8 @@ export function createSmartAnalysisRunRecord(
           @updated_at,
           @started_at,
           @completed_at,
-          @retry_of_run_id
+          @retry_of_run_id,
+          @recovery_json
         )
       `
       )
@@ -226,7 +235,8 @@ export function createSmartAnalysisRunRecord(
         updated_at: run.updatedAt,
         started_at: run.startedAt,
         completed_at: run.completedAt,
-        retry_of_run_id: run.retryOfRunId
+        retry_of_run_id: run.retryOfRunId,
+        recovery_json: JSON.stringify(run.recovery)
       });
   } finally {
     close();
@@ -257,6 +267,7 @@ export function updateSmartAnalysisRunRecord(
     status: updates.status ?? existing.status,
     diagnostics: updates.diagnostics ?? existing.diagnostics,
     error: updates.error === undefined ? existing.error : updates.error,
+    recovery: updates.recovery ?? existing.recovery,
     updatedAt: nowIso(),
     startedAt: updates.startedAt === undefined ? existing.startedAt : updates.startedAt,
     completedAt: updates.completedAt === undefined ? existing.completedAt : updates.completedAt,
@@ -279,7 +290,8 @@ export function updateSmartAnalysisRunRecord(
           updated_at = @updated_at,
           started_at = @started_at,
           completed_at = @completed_at,
-          retry_of_run_id = @retry_of_run_id
+          retry_of_run_id = @retry_of_run_id,
+          recovery_json = @recovery_json
         WHERE id = @id
       `
       )
@@ -293,7 +305,8 @@ export function updateSmartAnalysisRunRecord(
         updated_at: nextRun.updatedAt,
         started_at: nextRun.startedAt,
         completed_at: nextRun.completedAt,
-        retry_of_run_id: nextRun.retryOfRunId
+        retry_of_run_id: nextRun.retryOfRunId,
+        recovery_json: JSON.stringify(nextRun.recovery)
       });
   } finally {
     close();

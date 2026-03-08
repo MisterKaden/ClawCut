@@ -44,6 +44,12 @@ describe("control schema", () => {
         directory: "/tmp/project"
       })
     ).toThrow();
+
+    expect(() =>
+      parseLocalApiQueryInput("diagnostics.session", {
+        directory: "/tmp/project"
+      })
+    ).not.toThrow();
   });
 
   test("builds a machine-readable manifest with OpenClaw tools", () => {

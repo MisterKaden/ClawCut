@@ -6,6 +6,9 @@ import { delimiter, resolve } from "node:path";
 import type {
   CaptionSessionSnapshot,
   CreateProjectInput,
+  DiagnosticsSessionSnapshot,
+  ExecuteDiagnosticsActionInput,
+  ExecuteDiagnosticsActionResult,
   ExecuteCaptionCommandInput,
   ExecuteCaptionCommandResult,
   ExecuteExportCommandInput,
@@ -18,6 +21,7 @@ import type {
   ExecuteWorkflowCommandResult,
   ExportSessionSnapshot,
   EditorSessionSnapshot,
+  GetDiagnosticsSessionSnapshotInput,
   GetProjectSnapshotInput,
   GetEditorSessionSnapshotInput,
   GetExportSessionSnapshotInput,
@@ -71,6 +75,8 @@ export interface CreateMediaWorkerHostOptions {
   workspaceRoot?: string;
   workerEntryPath?: string;
   userDataPath?: string;
+  sessionLogDirectory?: string;
+  preferEmbeddedNodeRuntime?: boolean;
 }
 
 export interface MediaWorkerLaunchConfig {
@@ -98,6 +104,27 @@ function resolveNodeBinary(): string {
   return "node";
 }
 
+function resolveWorkerExecPath(
+  preferEmbeddedNodeRuntime: boolean
+): { execPath: string; env: NodeJS.ProcessEnv } {
+  if (preferEmbeddedNodeRuntime) {
+    return {
+      execPath: process.execPath,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1"
+      }
+    };
+  }
+
+  return {
+    execPath: resolveNodeBinary(),
+    env: {
+      ...process.env
+    }
+  };
+}
+
 function isWorkerErrorResponse(response: WorkerResponse): response is WorkerErrorResponse {
   return response.ok === false;
 }
@@ -106,15 +133,23 @@ export function resolveMediaWorkerLaunchConfig(
   options: CreateMediaWorkerHostOptions = {}
 ): MediaWorkerLaunchConfig {
   const workspaceRoot = options.workspaceRoot ?? process.cwd();
+  const preferEmbeddedNodeRuntime = options.preferEmbeddedNodeRuntime ?? false;
   const packageNodePaths = [
     resolve(workspaceRoot, "node_modules"),
+    resolve(workspaceRoot, "apps", "desktop", "node_modules"),
     resolve(workspaceRoot, "packages", "media-worker", "node_modules")
   ];
   const nodePath = [...packageNodePaths, process.env.NODE_PATH].filter(Boolean).join(delimiter);
+  const runtime = resolveWorkerExecPath(preferEmbeddedNodeRuntime);
   const explicitEntryPath = options.workerEntryPath;
   const extraEnv = options.userDataPath
     ? {
         CLAWCUT_USER_DATA_PATH: options.userDataPath
+      }
+    : {};
+  const sessionEnv = options.sessionLogDirectory
+    ? {
+        CLAWCUT_SESSION_LOG_DIR: options.sessionLogDirectory
       }
     : {};
 
@@ -122,41 +157,40 @@ export function resolveMediaWorkerLaunchConfig(
     return isTypeScriptWorkerEntry(explicitEntryPath)
       ? {
           workerEntryPath: explicitEntryPath,
-          execPath: resolveNodeBinary(),
+          execPath: runtime.execPath,
           execArgv: ["--import", "tsx"],
           env: {
-            ...process.env,
+            ...runtime.env,
             ...extraEnv,
+            ...sessionEnv,
             NODE_PATH: nodePath
           }
         }
       : {
           workerEntryPath: explicitEntryPath,
-          execPath: resolveNodeBinary(),
+          execPath: runtime.execPath,
           env: {
-            ...process.env,
+            ...runtime.env,
             ...extraEnv,
+            ...sessionEnv,
             NODE_PATH: nodePath
           }
         };
   }
 
-  const builtWorkerEntryPath = resolve(
-    workspaceRoot,
-    "apps",
-    "desktop",
-    "out",
-    "media-worker",
-    "worker.cjs"
-  );
+  const builtWorkerEntryPath = [
+    resolve(workspaceRoot, "out", "media-worker", "worker.cjs"),
+    resolve(workspaceRoot, "apps", "desktop", "out", "media-worker", "worker.cjs")
+  ].find((candidate) => existsSync(candidate));
 
-  if (existsSync(builtWorkerEntryPath)) {
+  if (builtWorkerEntryPath) {
     return {
       workerEntryPath: builtWorkerEntryPath,
-      execPath: resolveNodeBinary(),
+      execPath: runtime.execPath,
       env: {
-        ...process.env,
+        ...runtime.env,
         ...extraEnv,
+        ...sessionEnv,
         NODE_PATH: nodePath
       }
     };
@@ -164,11 +198,12 @@ export function resolveMediaWorkerLaunchConfig(
 
   return {
     workerEntryPath: resolve(workspaceRoot, "packages", "media-worker", "src", "worker.ts"),
-    execPath: resolveNodeBinary(),
+    execPath: runtime.execPath,
     execArgv: ["--import", "tsx"],
     env: {
-      ...process.env,
+      ...runtime.env,
       ...extraEnv,
+      ...sessionEnv,
       NODE_PATH: nodePath
     }
   };
@@ -319,10 +354,20 @@ export function createMediaWorkerHost(
     ): Promise<WorkflowSessionSnapshot> {
       return invoke("getWorkflowSessionSnapshot", input);
     },
+    getDiagnosticsSessionSnapshot(
+      input: GetDiagnosticsSessionSnapshotInput
+    ): Promise<DiagnosticsSessionSnapshot> {
+      return invoke("getDiagnosticsSessionSnapshot", input);
+    },
     executeWorkflowCommand(
       input: ExecuteWorkflowCommandInput
     ): Promise<ExecuteWorkflowCommandResult> {
       return invoke("executeWorkflowCommand", input);
+    },
+    executeDiagnosticsAction(
+      input: ExecuteDiagnosticsActionInput
+    ): Promise<ExecuteDiagnosticsActionResult> {
+      return invoke("executeDiagnosticsAction", input);
     },
     pickImportPaths(): Promise<PickImportPathsResult> {
       throw new Error("pickImportPaths is handled in the Electron main process.");

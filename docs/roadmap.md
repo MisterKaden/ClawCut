@@ -141,7 +141,7 @@ Current Stage 9 notes:
 
 ## Stage 10: Hardening
 
-Planned acceptance criteria:
+Delivered:
 
 - crash recovery and interruption handling are stronger
 - project/document and workflow migrations have broader coverage
@@ -149,6 +149,22 @@ Planned acceptance criteria:
 - diagnostics and audit logs are easier to inspect
 - performance budgets exist for preview, export, transcription, smart analysis, and workflows
 - regression fixtures run in CI
+
+Delivered details:
+
+- startup recovery for interrupted job/export/transcription/smart/workflow runs
+- explicit SQLite operational migrations through schema version `2`
+- diagnostics snapshot and in-app recovery panel
+- session-scoped worker/request log paths in diagnostics output
+- macOS packaged build scripts plus packaged smoke coverage
+- packaged-verify CI job
+- fixture-backed latency budgets for open/query/seek/compile/transcription/workflow snapshot paths
+
+Current Stage 10 notes:
+
+- packaged validation is macOS-first and unsigned
+- the packaged worker still uses the local Node runtime in the validated path
+- undo/redo remains session-scoped; Stage 10 does not add full UI session restore
 
 ## Stage 11: Beast mode
 

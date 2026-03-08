@@ -1,4 +1,4 @@
-import type { TranscriptionRun } from "@clawcut/domain";
+import { createEmptyRecoveryInfo, type TranscriptionRun } from "@clawcut/domain";
 
 import { openProjectDatabase } from "./sqlite";
 import { WorkerError, nowIso } from "./utils";
@@ -18,6 +18,7 @@ interface TranscriptionRunRow {
   started_at: string | null;
   completed_at: string | null;
   retry_of_run_id: string | null;
+  recovery_json?: string;
 }
 
 function rowToTranscriptionRun(row: TranscriptionRunRow): TranscriptionRun {
@@ -31,6 +32,9 @@ function rowToTranscriptionRun(row: TranscriptionRunRow): TranscriptionRun {
     rawArtifactPath: row.raw_artifact_path,
     diagnostics: JSON.parse(row.diagnostics_json) as TranscriptionRun["diagnostics"],
     error: row.error_json ? (JSON.parse(row.error_json) as TranscriptionRun["error"]) : null,
+    recovery: row.recovery_json
+      ? (JSON.parse(row.recovery_json) as TranscriptionRun["recovery"])
+      : createEmptyRecoveryInfo(),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     startedAt: row.started_at,
@@ -62,7 +66,8 @@ export function getTranscriptionRun(
           updated_at,
           started_at,
           completed_at,
-          retry_of_run_id
+          retry_of_run_id,
+          recovery_json
         FROM transcription_runs
         WHERE id = ?
       `)
@@ -94,7 +99,8 @@ export function listTranscriptionRuns(databasePath: string): TranscriptionRun[] 
           updated_at,
           started_at,
           completed_at,
-          retry_of_run_id
+          retry_of_run_id,
+          recovery_json
         FROM transcription_runs
         ORDER BY created_at DESC
       `)
@@ -129,7 +135,8 @@ export function createTranscriptionRunRecord(
           updated_at,
           started_at,
           completed_at,
-          retry_of_run_id
+          retry_of_run_id,
+          recovery_json
         ) VALUES (
           @id,
           @job_id,
@@ -144,7 +151,8 @@ export function createTranscriptionRunRecord(
           @updated_at,
           @started_at,
           @completed_at,
-          @retry_of_run_id
+          @retry_of_run_id,
+          @recovery_json
         )
       `)
       .run({
@@ -161,7 +169,8 @@ export function createTranscriptionRunRecord(
         updated_at: run.updatedAt,
         started_at: run.startedAt,
         completed_at: run.completedAt,
-        retry_of_run_id: run.retryOfRunId
+        retry_of_run_id: run.retryOfRunId,
+        recovery_json: JSON.stringify(run.recovery)
       });
   } finally {
     close();
@@ -191,6 +200,7 @@ export function updateTranscriptionRunRecord(
       updates.rawArtifactPath === undefined ? existing.rawArtifactPath : updates.rawArtifactPath,
     diagnostics: updates.diagnostics ?? existing.diagnostics,
     error: updates.error === undefined ? existing.error : updates.error,
+    recovery: updates.recovery ?? existing.recovery,
     updatedAt: nowIso(),
     startedAt: updates.startedAt === undefined ? existing.startedAt : updates.startedAt,
     completedAt: updates.completedAt === undefined ? existing.completedAt : updates.completedAt,
@@ -213,7 +223,8 @@ export function updateTranscriptionRunRecord(
           updated_at = @updated_at,
           started_at = @started_at,
           completed_at = @completed_at,
-          retry_of_run_id = @retry_of_run_id
+          retry_of_run_id = @retry_of_run_id,
+          recovery_json = @recovery_json
         WHERE id = @id
       `)
       .run({
@@ -227,7 +238,8 @@ export function updateTranscriptionRunRecord(
         updated_at: nextRun.updatedAt,
         started_at: nextRun.startedAt,
         completed_at: nextRun.completedAt,
-        retry_of_run_id: nextRun.retryOfRunId
+        retry_of_run_id: nextRun.retryOfRunId,
+        recovery_json: JSON.stringify(nextRun.recovery)
       });
   } finally {
     close();

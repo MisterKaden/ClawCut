@@ -17,6 +17,35 @@
 - Stage 9 bumps the canonical document to `ProjectDocumentV6`.
   - Decision: add `settings.branding.defaultBrandKitId` and caption-track branding snapshots while keeping workflow runs out of the canonical document.
 
+- Stage 10 keeps the canonical document at `ProjectDocumentV6`.
+  - Reason: recovery, diagnostics, packaging, and migration hardening are operational changes and do not require a user-authored schema change.
+
+## Operational schema and recovery
+
+- SQLite now uses explicit sequential migrations.
+  - Reason: operational-state upgrades need stable, testable version steps rather than implicit latest-schema creation.
+
+- Interrupted jobs and operational runs become explicit recoverable records.
+  - Reason: the desktop UI and OpenClaw need machine-readable retry/resume posture after crashes or forced shutdowns.
+
+- Recovery remains operational only; undo/redo history stays session-scoped.
+  - Reason: Stage 10 hardens jobs/runs without expanding into full UI session restore.
+
+## Diagnostics and packaging
+
+- Diagnostics are persisted as session-scoped JSONL logs linked from structured snapshots.
+  - Reason: local automation and packaged validation need inspectable failure context without introducing a remote logging stack.
+
+- Packaged validation is macOS-first and unsigned in Stage 10.
+  - Reason: the immediate requirement is reliable local and CI packaging verification, not signing/notarization infrastructure.
+
+- The current packaged worker validation path still uses the local Node runtime.
+  - Reason: this is the reliable ABI match for the current unsigned packaged `better-sqlite3` flow.
+  - Tradeoff: packaged validation proves the desktop artifact plus bundled worker path, but not yet a completely self-contained distribution runtime.
+
+- Performance guardrails are fixture-backed test budgets, not standalone benchmarks.
+  - Reason: Stage 10 needs regression detection for practical open/query/compile/transcription/workflow paths rather than noisy micro-benchmark numbers.
+
 ## Workflow engine design
 
 - Built-in typed workflow templates instead of an ad hoc JSON DSL.

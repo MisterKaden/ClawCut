@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import {
+  createEmptyRecoveryInfo,
   createEmptyProjectDocument,
   setCaptionExportDefaults,
   setDefaultBrandKitId,
@@ -11,6 +12,7 @@ import {
   type DerivedAssetType,
   type MediaItem,
   type Job,
+  type RecoveryInfo,
   type JobState,
   type MediaRelinkStatus,
   migrateProjectDocument,
@@ -42,7 +44,7 @@ import type {
 
 interface ProjectLoadResult {
   document: ProjectDocumentV3;
-  migrated: boolean;
+  projectDocumentMigrated: boolean;
 }
 
 function sortMediaItems(items: MediaItem[]): MediaItem[] {
@@ -124,7 +126,7 @@ async function loadProjectDocument(paths: ProjectPaths): Promise<ProjectLoadResu
 
   return {
     document,
-    migrated: rawInput.schemaVersion !== document.schemaVersion
+    projectDocumentMigrated: rawInput.schemaVersion !== document.schemaVersion
   };
 }
 
@@ -152,8 +154,12 @@ function rowToMediaJob(row: {
   created_at: string;
   updated_at: string;
   payload_json: string;
+  recovery_json?: string;
 }): Job {
   const payload = JSON.parse(row.payload_json) as PersistedJobPayload;
+  const recovery = row.recovery_json
+    ? (JSON.parse(row.recovery_json) as RecoveryInfo)
+    : createEmptyRecoveryInfo();
 
   if (row.kind === "ingest") {
     return {
@@ -168,6 +174,7 @@ function rowToMediaJob(row: {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       errorMessage: row.error_message,
+      recovery,
       sourcePath: (payload as PersistedIngestJobPayload).sourcePath
     };
   }
@@ -187,6 +194,7 @@ function rowToMediaJob(row: {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       errorMessage: row.error_message,
+      recovery,
       exportRunId: payload.exportRunId,
       exportMode: payload.exportMode,
       presetId: payload.presetId,
@@ -209,6 +217,7 @@ function rowToMediaJob(row: {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       errorMessage: row.error_message,
+      recovery,
       transcriptionRunId: payload.transcriptionRunId,
       transcriptId: payload.transcriptId,
       sourceClipId: payload.clipId,
@@ -231,6 +240,7 @@ function rowToMediaJob(row: {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       errorMessage: row.error_message,
+      recovery,
       analysisRunId: payload.analysisRunId,
       analysisType: payload.analysisType,
       suggestionSetId: payload.suggestionSetId
@@ -252,6 +262,7 @@ function rowToMediaJob(row: {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       errorMessage: row.error_message,
+      recovery,
       workflowRunId: payload.workflowRunId,
       templateId: payload.templateId,
       childJobIds: payload.childJobIds
@@ -270,6 +281,7 @@ function rowToMediaJob(row: {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     errorMessage: row.error_message,
+    recovery,
     sourceRevision: (payload as PersistedDerivedJobPayload).sourceRevision,
     presetKey: (payload as PersistedDerivedJobPayload).presetKey
   };
@@ -293,7 +305,8 @@ export function listJobs(databasePath: string): Job[] {
           error_message,
           created_at,
           updated_at,
-          payload_json
+          payload_json,
+          recovery_json
         FROM job_runs
         ORDER BY updated_at DESC
       `)
@@ -310,6 +323,7 @@ export function listJobs(databasePath: string): Job[] {
       created_at: string;
       updated_at: string;
       payload_json: string;
+      recovery_json: string;
     }>;
 
     return rows.map(rowToMediaJob);
@@ -336,7 +350,8 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
           error_message,
           created_at,
           updated_at,
-          payload_json
+          payload_json,
+          recovery_json
         FROM job_runs
         WHERE id = ?
       `)
@@ -354,6 +369,7 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
           created_at: string;
           updated_at: string;
           payload_json: string;
+          recovery_json: string;
         }
       | undefined;
 
@@ -373,6 +389,9 @@ export function getStoredJobRecord(databasePath: string, jobId: string): StoredJ
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       errorMessage: row.error_message,
+      recovery: row.recovery_json
+        ? (JSON.parse(row.recovery_json) as RecoveryInfo)
+        : createEmptyRecoveryInfo(),
       payload: JSON.parse(row.payload_json) as PersistedJobPayload
     };
   } finally {
@@ -391,6 +410,7 @@ export function createJobRecord(
     progress?: number;
     step?: string;
     errorMessage?: string | null;
+    recovery?: RecoveryInfo;
   }
 ): string {
   const { database, close } = openProjectDatabase(databasePath);
@@ -412,7 +432,8 @@ export function createJobRecord(
           error_message,
           created_at,
           updated_at,
-          payload_json
+          payload_json,
+          recovery_json
         )
         VALUES (
           @id,
@@ -426,7 +447,8 @@ export function createJobRecord(
           @error_message,
           @created_at,
           @updated_at,
-          @payload_json
+          @payload_json,
+          @recovery_json
         )
       `)
       .run({
@@ -441,7 +463,8 @@ export function createJobRecord(
         error_message: input.errorMessage ?? null,
         created_at: timestamp,
         updated_at: timestamp,
-        payload_json: JSON.stringify(input.payload)
+        payload_json: JSON.stringify(input.payload),
+        recovery_json: JSON.stringify(input.recovery ?? createEmptyRecoveryInfo())
       });
 
     return jobId;
@@ -482,7 +505,8 @@ export function updateJobRecord(
           attempt_count = @attempt_count,
           error_message = @error_message,
           updated_at = @updated_at,
-          payload_json = @payload_json
+          payload_json = @payload_json,
+          recovery_json = @recovery_json
         WHERE id = @id
       `)
       .run({
@@ -495,7 +519,8 @@ export function updateJobRecord(
         error_message:
           updates.errorMessage === undefined ? existing.errorMessage : updates.errorMessage,
         updated_at: nowIso(),
-        payload_json: JSON.stringify(updates.payload ?? existing.payload)
+        payload_json: JSON.stringify(updates.payload ?? existing.payload),
+        recovery_json: JSON.stringify(updates.recovery ?? existing.recovery)
       });
   } finally {
     close();
@@ -595,7 +620,13 @@ export async function createProject(
 
 export async function loadAndMaybeMigrateProject(
   directory: string
-): Promise<{ paths: ProjectPaths; document: ProjectDocumentV3 }> {
+): Promise<{
+  paths: ProjectPaths;
+  document: ProjectDocumentV3;
+  projectDocumentMigrated: boolean;
+  databaseMigrated: boolean;
+  databaseSchemaVersion: number;
+}> {
   const paths = resolveProjectPaths(directory);
 
   if (!(await fileExists(paths.projectFilePath))) {
@@ -608,16 +639,23 @@ export async function loadAndMaybeMigrateProject(
 
   const loadResult = await loadProjectDocument(paths);
 
-  if (loadResult.migrated) {
+  const databaseHandle = openProjectDatabase(paths.databasePath);
+
+  if (loadResult.projectDocumentMigrated) {
     await saveProjectDocument(paths, loadResult.document);
   }
 
-  openProjectDatabase(paths.databasePath).close();
-
-  return {
-    paths,
-    document: loadResult.document
-  };
+  try {
+    return {
+      paths,
+      document: loadResult.document,
+      projectDocumentMigrated: loadResult.projectDocumentMigrated,
+      databaseMigrated: databaseHandle.migrated,
+      databaseSchemaVersion: databaseHandle.schemaVersion
+    };
+  } finally {
+    databaseHandle.close();
+  }
 }
 
 export async function setProjectDocument(

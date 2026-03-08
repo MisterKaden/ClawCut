@@ -33,6 +33,7 @@ The HTTP transport is useful, but it is not the product identity. The durable co
   - bearer auth
   - command/query envelopes
   - event stream hook
+  - diagnostics snapshot and request-log metadata
 
 ## Versions
 
@@ -112,6 +113,11 @@ Routes:
 - `GET /api/v1/events`
 - `POST /api/v1/command`
 - `POST /api/v1/query`
+
+Important diagnostics query:
+
+- `diagnostics.session`
+  - returns recoverable operational runs, recent failures, migration state, and session log paths
 
 Auth:
 
@@ -201,6 +207,7 @@ Current event types:
 - `ready`
 - `jobs.snapshot`
 - `heartbeat`
+- `workflows.snapshot` when workflow state is changing
 
 ## Preview inspection
 
@@ -218,4 +225,5 @@ Automation callers can inspect current preview state with:
 - the current preview backend still depends on a live desktop window
 - the event stream is a lightweight SSE hook, not a durable event bus
 - the local transport is intentionally localhost-only and not designed for remote/public exposure
+- packaged Stage 10 validation is macOS-first and currently relies on the local Node runtime for the bundled worker path
 - the OpenClaw package is a thin adapter scaffold, not a general plugin marketplace format

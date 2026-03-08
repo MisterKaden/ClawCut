@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import {
   applyCaptionStyleOverridesToTrack,
+  createEmptyRecoveryInfo,
   createWorkflowSessionSnapshot,
   getBuiltInWorkflowTemplates,
   offsetCaptionTrackTiming,
@@ -240,6 +241,7 @@ function createWorkflowRunTemplate(input: {
     safetyProfile: input.template.safetyProfile,
     warnings: [],
     error: null,
+    recovery: createEmptyRecoveryInfo(),
     createdAt: timestamp,
     updatedAt: timestamp,
     startedAt: null,

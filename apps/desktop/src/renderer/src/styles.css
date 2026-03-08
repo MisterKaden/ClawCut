@@ -392,6 +392,10 @@ button {
   margin-top: 18px;
 }
 
+.diagnostics-panel {
+  margin-top: 18px;
+}
+
 .local-api-panel__token {
   margin-top: 18px;
 }
@@ -426,6 +430,44 @@ button {
   line-height: 1.5;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.82rem;
+}
+
+.diagnostics-panel__list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.diagnostics-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(8, 14, 18, 0.88);
+}
+
+.diagnostics-card--failure {
+  border-color: rgba(233, 134, 125, 0.18);
+}
+
+.diagnostics-card__header {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.diagnostics-card__header p,
+.diagnostics-card__meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.diagnostics-card__meta {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
 }
 
 .status-board__grid strong,

@@ -1,4 +1,4 @@
-import type { ExportRun } from "@clawcut/domain";
+import { createEmptyRecoveryInfo, type ExportRun } from "@clawcut/domain";
 
 import { openProjectDatabase } from "./sqlite";
 import { WorkerError, nowIso } from "./utils";
@@ -25,6 +25,7 @@ interface ExportRunRow {
   completed_at: string | null;
   retry_of_run_id: string | null;
   cancellation_requested: number;
+  recovery_json?: string;
 }
 
 function rowToExportRun(row: ExportRunRow): ExportRun {
@@ -50,6 +51,9 @@ function rowToExportRun(row: ExportRunRow): ExportRun {
       : null,
     diagnostics: JSON.parse(row.diagnostics_json) as ExportRun["diagnostics"],
     error: row.error_json ? (JSON.parse(row.error_json) as ExportRun["error"]) : null,
+    recovery: row.recovery_json
+      ? (JSON.parse(row.recovery_json) as ExportRun["recovery"])
+      : createEmptyRecoveryInfo(),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     startedAt: row.started_at,
@@ -86,7 +90,8 @@ function getExportRunRow(databasePath: string, exportRunId: string): ExportRunRo
           started_at,
           completed_at,
           retry_of_run_id,
-          cancellation_requested
+          cancellation_requested,
+          recovery_json
         FROM export_runs
         WHERE id = ?
       `)
@@ -130,7 +135,8 @@ export function listExportRuns(databasePath: string): ExportRun[] {
           started_at,
           completed_at,
           retry_of_run_id,
-          cancellation_requested
+          cancellation_requested,
+          recovery_json
         FROM export_runs
         ORDER BY created_at DESC
       `)
@@ -169,7 +175,8 @@ export function createExportRunRecord(databasePath: string, exportRun: ExportRun
           started_at,
           completed_at,
           retry_of_run_id,
-          cancellation_requested
+          cancellation_requested,
+          recovery_json
         ) VALUES (
           @id,
           @job_id,
@@ -191,7 +198,8 @@ export function createExportRunRecord(databasePath: string, exportRun: ExportRun
           @started_at,
           @completed_at,
           @retry_of_run_id,
-          @cancellation_requested
+          @cancellation_requested,
+          @recovery_json
         )
       `)
       .run({
@@ -215,7 +223,8 @@ export function createExportRunRecord(databasePath: string, exportRun: ExportRun
         started_at: exportRun.startedAt,
         completed_at: exportRun.completedAt,
         retry_of_run_id: exportRun.retryOfRunId,
-        cancellation_requested: exportRun.cancellationRequested ? 1 : 0
+        cancellation_requested: exportRun.cancellationRequested ? 1 : 0,
+        recovery_json: JSON.stringify(exportRun.recovery)
       });
   } finally {
     close();
@@ -255,6 +264,7 @@ export function updateExportRunRecord(
       updates.verification === undefined ? existing.verification : updates.verification,
     diagnostics: updates.diagnostics ?? existing.diagnostics,
     error: updates.error === undefined ? existing.error : updates.error,
+    recovery: updates.recovery ?? existing.recovery,
     createdAt: updates.createdAt ?? existing.createdAt,
     startedAt: updates.startedAt === undefined ? existing.startedAt : updates.startedAt,
     completedAt:
@@ -288,7 +298,8 @@ export function updateExportRunRecord(
           started_at = @started_at,
           completed_at = @completed_at,
           retry_of_run_id = @retry_of_run_id,
-          cancellation_requested = @cancellation_requested
+          cancellation_requested = @cancellation_requested,
+          recovery_json = @recovery_json
         WHERE id = @id
       `)
       .run({
@@ -306,7 +317,8 @@ export function updateExportRunRecord(
         started_at: nextRun.startedAt,
         completed_at: nextRun.completedAt,
         retry_of_run_id: nextRun.retryOfRunId,
-        cancellation_requested: nextRun.cancellationRequested ? 1 : 0
+        cancellation_requested: nextRun.cancellationRequested ? 1 : 0,
+        recovery_json: JSON.stringify(nextRun.recovery)
       });
   } finally {
     close();

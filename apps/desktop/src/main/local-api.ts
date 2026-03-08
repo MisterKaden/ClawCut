@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
@@ -56,6 +56,7 @@ type LocalApiWorkerGateway = Omit<
 
 export interface LocalApiControllerOptions {
   configPath: string;
+  sessionLogDirectory: string;
   worker: LocalApiWorkerGateway;
   preview: PreviewBridge;
 }
@@ -275,6 +276,10 @@ export class LocalApiController {
 
   private readonly configPath: string;
 
+  private readonly sessionLogDirectory: string;
+
+  private readonly requestLogPath: string;
+
   private config: StoredLocalApiConfig | null = null;
 
   private server: Server | null = null;
@@ -291,9 +296,12 @@ export class LocalApiController {
     this.worker = options.worker;
     this.preview = options.preview;
     this.configPath = options.configPath;
+    this.sessionLogDirectory = options.sessionLogDirectory;
+    this.requestLogPath = join(options.sessionLogDirectory, "local-api-requests.jsonl");
   }
 
   async initialize(): Promise<void> {
+    await mkdir(this.sessionLogDirectory, { recursive: true });
     this.config = await loadOrCreateConfig(this.configPath);
 
     if (this.config.enabled) {
@@ -320,6 +328,8 @@ export class LocalApiController {
       openClawTools: OPENCLAW_TOOL_DEFINITIONS,
       openClawManifest: createOpenClawToolManifest(capabilities),
       eventStream: EVENT_STREAM_DESCRIPTOR,
+      sessionLogDirectory: this.sessionLogDirectory,
+      requestLogPath: this.requestLogPath,
       recentRequests: [...this.recentRequests],
       lastError: this.lastError
     };
@@ -446,12 +456,28 @@ export class LocalApiController {
 
   private logRequest(entry: LocalApiRequestLogEntry): void {
     this.recentRequests = [entry, ...this.recentRequests].slice(0, MAX_REQUEST_LOGS);
+    void this.persistRequestLog(entry);
 
     if (process.env.NODE_ENV !== "production") {
       const suffix = entry.errorCode ? ` (${entry.errorCode})` : "";
       console.log(
         `[clawcut-local-api] ${entry.operationType} ${entry.name} -> ${entry.status}${suffix} [${entry.requestId}] ${entry.durationMs}ms`
       );
+    }
+  }
+
+  private async persistRequestLog(entry: LocalApiRequestLogEntry): Promise<void> {
+    try {
+      await mkdir(dirname(this.requestLogPath), { recursive: true });
+      await appendFile(this.requestLogPath, `${JSON.stringify(entry)}\n`, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+        return;
+      }
+
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[clawcut-local-api] failed to persist request log", error);
+      }
     }
   }
 
@@ -1350,6 +1376,16 @@ export class LocalApiController {
           captionTrackCount: captionSession.captionTracks.length,
           exportRunCount: exportSession.exportRuns.length
         });
+      }
+      case "diagnostics.session": {
+        const diagnostics = await this.worker.getDiagnosticsSessionSnapshot(
+          parsed as LocalApiQueryInputMap["diagnostics.session"]
+        );
+        return {
+          ...diagnostics,
+          sessionLogDirectory: diagnostics.sessionLogDirectory ?? this.sessionLogDirectory,
+          requestLogPath: this.requestLogPath
+        };
       }
       case "project.snapshot":
         return this.worker.getProjectSnapshot(parsed as LocalApiQueryInputMap["project.snapshot"]);

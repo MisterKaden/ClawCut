@@ -1,8 +1,10 @@
 import type {
   CreateProjectInput,
+  ExecuteDiagnosticsActionInput,
   ExecuteCaptionCommandInput,
   ExecuteExportCommandInput,
   ExecuteEditorCommandInput,
+  GetDiagnosticsSessionSnapshotInput,
   GetExportSessionSnapshotInput,
   GetEditorSessionSnapshotInput,
   GetCaptionSessionSnapshotInput,
@@ -23,6 +25,11 @@ import {
   executeCaptionCommand,
   getCaptionSessionSnapshot
 } from "./caption-session";
+import {
+  ensureProjectOperationalRecovery,
+  executeDiagnosticsAction,
+  getDiagnosticsSessionSnapshot
+} from "./diagnostics-session";
 import {
   executeEditorCommand,
   getEditorSessionSnapshot
@@ -63,18 +70,21 @@ export async function handleCreateProject(input: CreateProjectInput) {
 }
 
 export async function handleOpenProject(input: OpenProjectInput) {
+  await ensureProjectOperationalRecovery(input.directory);
   const snapshot = await openProject(input.directory);
   await primeProjectJobs(input.directory);
   return snapshot;
 }
 
 export async function handleGetProjectSnapshot(input: GetProjectSnapshotInput) {
+  await ensureProjectOperationalRecovery(input.directory);
   return getProjectSnapshot(input.directory);
 }
 
 export async function handleGetEditorSessionSnapshot(
   input: GetEditorSessionSnapshotInput
 ) {
+  await ensureProjectOperationalRecovery(input.directory);
   return getEditorSessionSnapshot(input.directory);
 }
 
@@ -85,6 +95,7 @@ export async function handleExecuteEditorCommand(input: ExecuteEditorCommandInpu
 export async function handleGetExportSessionSnapshot(
   input: GetExportSessionSnapshotInput
 ) {
+  await ensureProjectOperationalRecovery(input.directory);
   return getExportSessionSnapshot(input);
 }
 
@@ -95,6 +106,7 @@ export async function handleExecuteExportCommand(input: ExecuteExportCommandInpu
 export async function handleGetCaptionSessionSnapshot(
   input: GetCaptionSessionSnapshotInput
 ) {
+  await ensureProjectOperationalRecovery(input.directory);
   return getCaptionSessionSnapshot(input);
 }
 
@@ -105,6 +117,7 @@ export async function handleExecuteCaptionCommand(input: ExecuteCaptionCommandIn
 export async function handleGetSmartSessionSnapshot(
   input: GetSmartSessionSnapshotInput
 ) {
+  await ensureProjectOperationalRecovery(input.directory);
   return getSmartSessionSnapshot(input);
 }
 
@@ -115,7 +128,20 @@ export async function handleExecuteSmartCommand(input: ExecuteSmartCommandInput)
 export async function handleGetWorkflowSessionSnapshot(
   input: GetWorkflowSessionSnapshotInput
 ) {
+  await ensureProjectOperationalRecovery(input.directory);
   return getWorkflowSessionSnapshot(input);
+}
+
+export async function handleGetDiagnosticsSessionSnapshot(
+  input: GetDiagnosticsSessionSnapshotInput
+) {
+  return getDiagnosticsSessionSnapshot(input);
+}
+
+export async function handleExecuteDiagnosticsAction(
+  input: ExecuteDiagnosticsActionInput
+) {
+  return executeDiagnosticsAction(input);
 }
 
 export async function handleExecuteWorkflowCommand(input: ExecuteWorkflowCommandInput) {

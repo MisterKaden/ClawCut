@@ -5,11 +5,13 @@ import {
   type ClawcutApi,
   type CreateProjectInput,
   type ExecuteCaptionCommandInput,
+  type ExecuteDiagnosticsActionInput,
   type ExecuteExportCommandInput,
   type ExecuteEditorCommandInput,
   type ExecuteSmartCommandInput,
   type ExecuteWorkflowCommandInput,
   type GetCaptionSessionSnapshotInput,
+  type GetDiagnosticsSessionSnapshotInput,
   type GetExportSessionSnapshotInput,
   type GetEditorSessionSnapshotInput,
   type GetProjectSnapshotInput,
@@ -77,6 +79,15 @@ export function registerIpcHandlers(api: ClawcutApi): void {
   ipcMain.handle(
     IPC_CHANNELS.executeWorkflowCommand,
     async (_event, input: ExecuteWorkflowCommandInput) => api.executeWorkflowCommand(input)
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.getDiagnosticsSessionSnapshot,
+    async (_event, input: GetDiagnosticsSessionSnapshotInput) =>
+      api.getDiagnosticsSessionSnapshot(input)
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.executeDiagnosticsAction,
+    async (_event, input: ExecuteDiagnosticsActionInput) => api.executeDiagnosticsAction(input)
   );
   ipcMain.handle(
     IPC_CHANNELS.pickImportPaths,

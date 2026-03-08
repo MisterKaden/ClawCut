@@ -1,6 +1,9 @@
 import type {
   CaptionSessionSnapshot,
   CreateProjectInput,
+  DiagnosticsSessionSnapshot,
+  ExecuteDiagnosticsActionInput,
+  ExecuteDiagnosticsActionResult,
   ExecuteCaptionCommandInput,
   ExecuteCaptionCommandResult,
   ExecuteExportCommandInput,
@@ -14,6 +17,7 @@ import type {
   ExportSessionSnapshot,
   EditorSessionSnapshot,
   GetCaptionSessionSnapshotInput,
+  GetDiagnosticsSessionSnapshotInput,
   GetProjectSnapshotInput,
   GetEditorSessionSnapshotInput,
   GetExportSessionSnapshotInput,
@@ -92,6 +96,14 @@ export interface WorkerMethodMap {
   executeWorkflowCommand: {
     request: ExecuteWorkflowCommandInput;
     response: ExecuteWorkflowCommandResult;
+  };
+  getDiagnosticsSessionSnapshot: {
+    request: GetDiagnosticsSessionSnapshotInput;
+    response: DiagnosticsSessionSnapshot;
+  };
+  executeDiagnosticsAction: {
+    request: ExecuteDiagnosticsActionInput;
+    response: ExecuteDiagnosticsActionResult;
   };
   pickImportPaths: {
     request: PickImportPathsInput | null;

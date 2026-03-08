@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import {
   applyCaptionTemplateToTrack,
+  createEmptyRecoveryInfo,
   createEmptyTranscriptDiagnostics,
   createTranscriptFromNormalizedResult,
   formatCaptionTrackAsAss,
@@ -453,6 +454,7 @@ export async function executeCaptionCommand(
         rawArtifactPath: null,
         diagnostics: createEmptyTranscriptDiagnostics(),
         error: null,
+        recovery: createEmptyRecoveryInfo(),
         createdAt: nowIso(),
         updatedAt: nowIso(),
         startedAt: null,

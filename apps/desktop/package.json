@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build && node ../../scripts/build-media-worker.mjs",
+    "package:mac": "pnpm build && electron-builder --config electron-builder.yml --mac dir zip && node ../../scripts/postpackage-mac.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
@@ -19,5 +20,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3"
   }
 }

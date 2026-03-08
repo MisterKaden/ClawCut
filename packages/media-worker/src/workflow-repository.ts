@@ -1,4 +1,5 @@
 import {
+  createEmptyRecoveryInfo,
   summarizeWorkflowRun,
   type WorkflowApproval,
   type WorkflowArtifact,
@@ -25,6 +26,7 @@ interface WorkflowRunRow {
   updated_at: string;
   started_at: string | null;
   completed_at: string | null;
+  recovery_json?: string;
 }
 
 interface WorkflowStepRunRow {
@@ -184,7 +186,8 @@ function getWorkflowRunRows(databasePath: string): WorkflowRunRow[] {
           created_at,
           updated_at,
           started_at,
-          completed_at
+          completed_at,
+          recovery_json
         FROM workflow_runs
         ORDER BY created_at DESC
       `
@@ -345,6 +348,9 @@ function assembleWorkflowRuns(databasePath: string): WorkflowRun[] {
       safetyProfile: JSON.parse(row.safety_profile_json) as WorkflowRun["safetyProfile"],
       warnings: JSON.parse(row.warnings_json) as WorkflowRun["warnings"],
       error: row.error_json ? (JSON.parse(row.error_json) as WorkflowRun["error"]) : null,
+      recovery: row.recovery_json
+        ? (JSON.parse(row.recovery_json) as WorkflowRun["recovery"])
+        : createEmptyRecoveryInfo(),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       startedAt: row.started_at,
@@ -412,7 +418,8 @@ export function createWorkflowRunRecord(databasePath: string, run: WorkflowRun):
           created_at,
           updated_at,
           started_at,
-          completed_at
+          completed_at,
+          recovery_json
         ) VALUES (
           @id,
           @job_id,
@@ -427,7 +434,8 @@ export function createWorkflowRunRecord(databasePath: string, run: WorkflowRun):
           @created_at,
           @updated_at,
           @started_at,
-          @completed_at
+          @completed_at,
+          @recovery_json
         )
       `
       )
@@ -445,7 +453,8 @@ export function createWorkflowRunRecord(databasePath: string, run: WorkflowRun):
         created_at: run.createdAt,
         updated_at: run.updatedAt,
         started_at: run.startedAt,
-        completed_at: run.completedAt
+        completed_at: run.completedAt,
+        recovery_json: JSON.stringify(run.recovery)
       });
   } finally {
     close();
@@ -473,6 +482,7 @@ export function updateWorkflowRunRecord(
     safetyProfile: updates.safetyProfile ?? existing.safetyProfile,
     warnings: updates.warnings ?? existing.warnings,
     error: updates.error === undefined ? existing.error : updates.error,
+    recovery: updates.recovery ?? existing.recovery,
     updatedAt: nowIso(),
     startedAt: updates.startedAt === undefined ? existing.startedAt : updates.startedAt,
     completedAt: updates.completedAt === undefined ? existing.completedAt : updates.completedAt,
@@ -498,7 +508,8 @@ export function updateWorkflowRunRecord(
           error_json = @error_json,
           updated_at = @updated_at,
           started_at = @started_at,
-          completed_at = @completed_at
+          completed_at = @completed_at,
+          recovery_json = @recovery_json
         WHERE id = @id
       `
       )
@@ -511,7 +522,8 @@ export function updateWorkflowRunRecord(
         error_json: nextRun.error ? JSON.stringify(nextRun.error) : null,
         updated_at: nextRun.updatedAt,
         started_at: nextRun.startedAt,
-        completed_at: nextRun.completedAt
+        completed_at: nextRun.completedAt,
+        recovery_json: JSON.stringify(nextRun.recovery)
       });
   } finally {
     close();

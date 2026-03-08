@@ -1,5 +1,6 @@
 export * from "./brand-kit-store";
 export * from "./caption-session";
+export * from "./diagnostics-session";
 export * from "./editor-session";
 export * from "./export-session";
 export * from "./host";

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { JobError } from "./jobs";
+import type { JobError, RecoveryInfo } from "./jobs";
 import type { BrandKit } from "./brand-kits";
 
 export const WORKFLOW_RUN_STATUSES = [
@@ -218,6 +218,7 @@ export interface WorkflowRun {
   safetyProfile: WorkflowSafetyProfile;
   warnings: string[];
   error: JobError | null;
+  recovery: RecoveryInfo;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;

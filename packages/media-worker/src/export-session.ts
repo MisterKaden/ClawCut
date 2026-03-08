@@ -12,6 +12,7 @@ import { dirname, extname, join } from "node:path";
 import {
   compileFfmpegExecutionSpec,
   compileRenderPlan,
+  createEmptyRecoveryInfo,
   formatCaptionTrackAsAss,
   createEmptyExportDiagnostics,
   createPendingVerificationResult,
@@ -54,7 +55,6 @@ import {
 import {
   loadAndMaybeMigrateProject,
   createJobRecord,
-  getStoredJobRecord,
   updateJobRecord
 } from "./project-repository";
 import { resolveExportArtifactDirectory, resolveProjectPaths } from "./paths";
@@ -71,16 +71,6 @@ const activeExports = new Map<string, ActiveExportProcess>();
 function isActiveStatus(status: ExportRun["status"]): boolean {
   return (
     status === "queued" ||
-    status === "preparing" ||
-    status === "compiling" ||
-    status === "rendering" ||
-    status === "finalizing" ||
-    status === "verifying"
-  );
-}
-
-function isInFlightStatus(status: ExportRun["status"]): boolean {
-  return (
     status === "preparing" ||
     status === "compiling" ||
     status === "rendering" ||
@@ -167,40 +157,6 @@ function resolveSnapshotFailureCode(
   }
 }
 
-async function primeInterruptedExports(directory: string): Promise<void> {
-  const paths = resolveProjectPaths(directory);
-  const runs = listExportRuns(paths.databasePath);
-
-  for (const run of runs) {
-    if (!isInFlightStatus(run.status)) {
-      continue;
-    }
-
-    if (activeExports.get(paths.directory)?.exportRunId === run.id) {
-      continue;
-    }
-
-    updateExportRunRecord(paths.databasePath, run.id, {
-      status: "failed",
-      error: {
-        code: "EXPORT_INTERRUPTED",
-        message: "The export was interrupted before completion."
-      },
-      completedAt: nowIso()
-    });
-
-    const job = getStoredJobRecord(paths.databasePath, run.jobId);
-
-    if (job) {
-      updateJobRecord(paths.databasePath, job.id, {
-        status: "failed",
-        step: "Interrupted",
-        errorMessage: "The export was interrupted before completion."
-      });
-    }
-  }
-}
-
 function buildSessionSnapshot(
   directory: string,
   projectName: string,
@@ -226,7 +182,6 @@ export async function getExportSessionSnapshot(
   input: GetExportSessionSnapshotInput
 ): Promise<ExportSessionSnapshot> {
   const { paths, document } = await loadAndMaybeMigrateProject(input.directory);
-  await primeInterruptedExports(paths.directory);
 
   return {
     ...buildSessionSnapshot(
@@ -1537,7 +1492,6 @@ export async function executeExportCommand(
   input: ExecuteExportCommandInput
 ): Promise<ExecuteExportCommandResult> {
   const { paths, document } = await loadAndMaybeMigrateProject(input.directory);
-  await primeInterruptedExports(paths.directory);
 
   switch (input.command.type) {
     case "CreateExportRequest": {
@@ -1676,6 +1630,7 @@ export async function executeExportCommand(
         verification: createPendingVerificationResult(),
         diagnostics: createEmptyExportDiagnostics(),
         error: null,
+        recovery: createEmptyRecoveryInfo(),
         createdAt: nowIso(),
         updatedAt: nowIso(),
         startedAt: null,
@@ -1856,6 +1811,7 @@ export async function executeExportCommand(
         verification: createPendingVerificationResult(),
         diagnostics: createEmptyExportDiagnostics(),
         error: null,
+        recovery: createEmptyRecoveryInfo(),
         createdAt: nowIso(),
         updatedAt: nowIso(),
         startedAt: null,

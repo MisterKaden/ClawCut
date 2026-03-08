@@ -87,6 +87,20 @@ The project file does not own:
 
 Those remain worker-owned operational state.
 
+## Stage 10 hardening posture
+
+Stage 10 keeps the canonical project schema at `ProjectDocumentV6` and hardens the operational layer around it.
+
+The main additions are:
+
+- startup recovery for interrupted operational runs
+- sequential SQLite migrations with explicit schema versions
+- session-scoped diagnostics and request logging
+- packaged-build validation for the macOS desktop app
+- fixture-backed performance budgets
+
+These are reliability features. They do not change the ownership boundary of the canonical editing model.
+
 ## Project and operational storage
 
 Clawcut remains hybrid:
@@ -112,6 +126,12 @@ Stage 9 adds worker-owned tables for:
 - `workflow_approvals`
 - `workflow_artifacts`
 
+Stage 10 extends operational storage with:
+
+- sequential DB migrations up to schema version `2`
+- `recovery_json` persisted on job/export/transcription/smart/workflow rows
+- per-session log directories under the desktop user-data path
+
 ## Command/query schema as the primary contract
 
 Clawcut’s external control surface is schema-first.
@@ -128,6 +148,17 @@ Every externally callable operation has:
 - required scope
 
 The schema layer is the product contract. Transport and plugin adapters consume it.
+
+Stage 10 adds a diagnostics query surface on top of the same contract:
+
+- `diagnostics.session`
+
+That snapshot is machine-readable and returns:
+
+- recoverable operational runs
+- recent worker/control-surface failures
+- migration status
+- session log paths
 
 ## Local control transport
 
@@ -149,6 +180,8 @@ Current properties:
 - capability discovery
 - machine-readable OpenClaw manifest export
 - lightweight SSE updates for jobs and workflows
+
+Stage 10 adds request-log persistence for the local transport. Request bodies are still redacted at the boundary where secrets or tokens could otherwise leak into logs.
 
 ## OpenClaw integration boundary
 
@@ -186,6 +219,65 @@ Stage 9 packages those primitives into reusable workflows:
 6. persist artifacts and machine-readable outcomes
 
 The workflow engine composes existing systems. It does not replace them.
+
+## Recovery model
+
+Recovery is worker-owned and runs before normal snapshot polling.
+
+On project open or project-scoped session access, the worker scans interrupted operational rows:
+
+- `job_runs`
+- `export_runs`
+- `transcription_runs`
+- `smart_analysis_runs`
+- `workflow_runs`
+
+If a row was left in an active state such as `queued` or `running`, it is converted into a recoverable state with explicit metadata:
+
+- recovery state
+- suggested recovery action (`retry` or `resume`)
+- reason
+- timestamp
+
+Recovery does not attempt to restore UI state or undo/redo history. It restores operational visibility and safe retry/resume posture only.
+
+## Diagnostics and auditability
+
+Stage 10 standardizes lightweight local diagnostics around per-session JSONL logs.
+
+Current sources include:
+
+- local transport request logs
+- worker diagnostics for export/transcription/smart/workflow failures
+- artifact-linked paths returned by diagnostics snapshots
+
+The intended shape is:
+
+- timestamp
+- subsystem
+- severity
+- stable machine code/message
+- related ids such as request/job/export/transcription/workflow
+
+This is optimized for local debugging and OpenClaw/local automation triage rather than remote ops aggregation.
+
+## Migration posture
+
+Project documents continue to migrate through the domain-layer migration entrypoint.
+
+Operational SQLite storage now uses explicit sequential migrations instead of opportunistic latest-schema creation. This keeps recovery and packaging changes versionable without coupling them to canonical project-file schema bumps.
+
+Current SQLite schema version: `2`
+
+## Packaged-build posture
+
+Stage 10 validates unsigned macOS packaged builds in CI and locally.
+
+Important current limitation:
+
+- the packaged app ships a bundled worker entry and packaged dependencies, but the worker still executes under the local Node runtime for current unsigned/dev packaging
+
+This is intentional for now because the packaged `better-sqlite3` dependency currently aligns reliably with the local Node ABI in the validated packaging path. The limitation is explicit and covered by the packaged smoke path.
 
 ## Workflow model
 

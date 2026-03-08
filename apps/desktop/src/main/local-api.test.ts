@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
+  createEmptyRecoveryInfo,
   createEmptyProjectDocument,
   getBuiltInBrandKits,
   getBuiltInCaptionTemplates,
@@ -39,6 +40,7 @@ function createFakeSnapshots(directory: string) {
     createdAt,
     updatedAt: createdAt,
     errorMessage: null,
+    recovery: createEmptyRecoveryInfo(),
     exportRunId: "export-run-1",
     exportMode: "video",
     presetId: "video-share-720p",
@@ -56,6 +58,7 @@ function createFakeSnapshots(directory: string) {
     createdAt,
     updatedAt: createdAt,
     errorMessage: null,
+    recovery: createEmptyRecoveryInfo(),
     transcriptionRunId: "transcription-run-1",
     transcriptId: null,
     sourceClipId: "clip-1",
@@ -73,6 +76,7 @@ function createFakeSnapshots(directory: string) {
     createdAt,
     updatedAt: createdAt,
     errorMessage: null,
+    recovery: createEmptyRecoveryInfo(),
     analysisRunId: "analysis-run-1",
     analysisType: "silence",
     suggestionSetId: "suggestion-set-1"
@@ -144,7 +148,8 @@ function createFakeSnapshots(directory: string) {
         startedAt: null,
         completedAt: null,
         retryOfRunId: null,
-        cancellationRequested: false
+        cancellationRequested: false,
+        recovery: createEmptyRecoveryInfo()
       }
     ],
     activeExportRunId: "export-run-1",
@@ -197,7 +202,8 @@ function createFakeSnapshots(directory: string) {
         updatedAt: createdAt,
         startedAt: createdAt,
         completedAt: null,
-        retryOfRunId: null
+        retryOfRunId: null,
+        recovery: createEmptyRecoveryInfo()
       }
     ],
     activeTranscriptionJobId: transcriptionJob.id,
@@ -292,7 +298,8 @@ function createFakeSnapshots(directory: string) {
         updatedAt: createdAt,
         startedAt: createdAt,
         completedAt: createdAt,
-        retryOfRunId: null
+        retryOfRunId: null,
+        recovery: createEmptyRecoveryInfo()
       }
     ],
     editPlans: [
@@ -445,7 +452,8 @@ function createFakeSnapshots(directory: string) {
           totalBatchItemCount: 0,
           failedBatchItemCount: 0,
           waitingApprovalCount: 1
-        }
+        },
+        recovery: createEmptyRecoveryInfo()
       }
     ],
     pendingApprovals: [
@@ -468,13 +476,57 @@ function createFakeSnapshots(directory: string) {
     lastError: null
   } as const;
 
+  const diagnosticsSession = {
+    directory,
+    projectName: document.project.name,
+    sessionLogDirectory: join(directory, "logs"),
+    requestLogPath: join(directory, "logs", "local-api-requests.jsonl"),
+    workerLogPath: join(directory, "logs", "worker-diagnostics.jsonl"),
+    recentFailures: [
+      {
+        id: "failure-1",
+        subsystem: "export" as const,
+        severity: "warning" as const,
+        code: "EXPORT_INTERRUPTED",
+        message: "The export was interrupted before completion.",
+        occurredAt: createdAt,
+        requestId: null,
+        jobId: exportJob.id,
+        runId: "export-run-1",
+        logPath: null,
+        artifactPath: join(directory, ".clawcut", "exports", "export-run-1")
+      }
+    ],
+    recoverableItems: [
+      {
+        id: "export-run-1",
+        kind: "export-run" as const,
+        jobId: exportJob.id,
+        title: "Retry export video-share-720p",
+        status: "failed",
+        recommendedAction: "retry" as const,
+        reason: "The export was interrupted before completion.",
+        interruptedAt: createdAt,
+        logPath: null,
+        artifactPath: join(directory, ".clawcut", "exports", "export-run-1")
+      }
+    ],
+    migration: {
+      projectSchemaVersion: 6,
+      databaseSchemaVersion: 2,
+      projectDocumentMigrated: false,
+      databaseMigrated: false
+    }
+  } as const;
+
   return {
     workspaceSnapshot,
     editorSnapshot,
     exportSession,
     captionSession,
     smartSession,
-    workflowSession
+    workflowSession,
+    diagnosticsSession
   };
 }
 
@@ -581,6 +633,7 @@ function createFakeWorker(directory: string, snapshots = createFakeSnapshots(dir
               }
     })),
     getWorkflowSessionSnapshot: vi.fn(async () => snapshots.workflowSession),
+    getDiagnosticsSessionSnapshot: vi.fn(async () => snapshots.diagnosticsSession),
     executeWorkflowCommand: vi.fn(async (input: { command: { type: string } }) => ({
       snapshot: snapshots.workflowSession,
       result:
@@ -596,6 +649,16 @@ function createFakeWorker(directory: string, snapshots = createFakeSnapshots(dir
               commandType: "ApproveWorkflowStep" as const,
               workflowRun: snapshots.workflowSession.workflowRuns[0]
             }
+    }))
+    ,
+    executeDiagnosticsAction: vi.fn(async () => ({
+      snapshot: snapshots.diagnosticsSession,
+      result: {
+        ok: true,
+        actionType: "RetryRecoverableItem" as const,
+        targetKind: "export-run" as const,
+        targetId: "export-run-1"
+      }
     }))
   };
 }
@@ -688,6 +751,7 @@ async function createStartedController(options?: {
   const preview = createFakePreviewBridge(snapshots.editorSnapshot.timeline.id);
   const controller = new LocalApiController({
     configPath,
+    sessionLogDirectory: join(directory, "logs"),
     worker: worker as never,
     preview
   });
@@ -1217,6 +1281,42 @@ describe.sequential("LocalApiController", () => {
     expect(transcriptionJob.body.data.job?.kind).toBe("transcription");
     expect(transcriptionJob.body.data.transcriptionRun?.id).toBe("transcription-run-1");
     expect(transcriptionJob.body.data.exportRun).toBeNull();
+  });
+
+  test("returns diagnostics session snapshots with persisted request-log metadata", async () => {
+    const started = await createStartedController();
+
+    if (!started.status.baseUrl) {
+      throw new Error("Local API did not expose a base URL.");
+    }
+
+    const diagnostics = await requestJson<{
+      ok: true;
+      data: {
+        projectName: string;
+        requestLogPath: string | null;
+        recoverableItems: Array<{ kind: string }>;
+        migration: { databaseSchemaVersion: number };
+      };
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "diagnostics.session",
+        input: {
+          directory: started.directory
+        }
+      }
+    });
+
+    expect(diagnostics.status).toBe(200);
+    expect(diagnostics.body.data.projectName).toBe("Local API Test");
+    expect(diagnostics.body.data.requestLogPath).toContain("local-api-requests.jsonl");
+    expect(diagnostics.body.data.recoverableItems[0]?.kind).toBe("export-run");
+    expect(diagnostics.body.data.migration.databaseSchemaVersion).toBe(2);
+    expect(started.worker.getDiagnosticsSessionSnapshot).toHaveBeenCalledWith({
+      directory: started.directory
+    });
   });
 
   test("streams authenticated job updates through the local event stream", async () => {

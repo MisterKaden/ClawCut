@@ -135,6 +135,7 @@ const transcriptGetSchema: z.ZodType<LocalApiTranscriptGetInput> = z.object({
   directory: nonEmptyString,
   transcriptId: nonEmptyString
 });
+const diagnosticsSessionSchema = directorySchema;
 const captionTrackGetSchema: z.ZodType<LocalApiCaptionTrackGetInput> = z.object({
   directory: nonEmptyString,
   captionTrackId: nonEmptyString
@@ -2030,6 +2031,26 @@ const QUERY_DEFINITIONS: QueryDefinition[] = [
     inputSchema: objectSchema({}, []),
     outputDescription: "Returns the local toolchain status.",
     parser: emptyObjectSchema
+  },
+  {
+    kind: "query",
+    name: "diagnostics.session",
+    category: "system",
+    description: "Return recent failures, recoverable runs, log paths, and migration status for a project.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns the diagnostics session snapshot.",
+    parser: diagnosticsSessionSchema
   },
   {
     kind: "query",

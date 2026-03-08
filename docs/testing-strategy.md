@@ -36,6 +36,8 @@ Worker tests cover real persistence and orchestration behavior with temp project
 Current worker coverage includes:
 
 - project persistence
+- project document migration fixtures from `ProjectDocumentV1` through `ProjectDocumentV6`
+- explicit SQLite migration coverage for operational schema upgrades
 - ingest, cache, relink, and derived-asset registration
 - editor session execution and timeline persistence
 - export queue lifecycle and verification
@@ -43,6 +45,7 @@ Current worker coverage includes:
 - caption persistence and subtitle export
 - smart analysis persistence and suggestion application
 - workflow run lifecycle
+- interrupted-run recovery detection and recoverable-state projection
 - approval boundary behavior
 - resume/retry semantics
 - workflow artifact creation
@@ -59,6 +62,7 @@ The control surface is tested as a schema-first contract.
 Current coverage includes:
 
 - command/query schema descriptors
+- command/query/tool contract regression coverage
 - safety and mutability classification
 - allowlist/default exposure rules
 - OpenClaw manifest generation
@@ -68,6 +72,7 @@ Current coverage includes:
 - capability discovery
 - SSE payload shape for jobs and workflows
 - preview frame-reference queries
+- diagnostics session snapshots and request-log metadata
 - workflow and brand-kit operation mapping
 
 The goal is to keep OpenClaw and local automation on the same typed contract the UI already uses.
@@ -80,6 +85,7 @@ Renderer tests stay focused on renderer-owned behavior only:
 - adapter-mediated playback control
 - preview overlay resolution
 - caption overlay activation
+- preview seek latency budget coverage
 - workflow panel rendering and interaction wiring as needed
 
 The renderer does not get to own domain logic, so domain behaviors are tested elsewhere.
@@ -109,13 +115,47 @@ Current smoke coverage includes:
 17. run `smart-cleanup-v1` through approval, approval-aware resume, application, and undo verification
 18. run `batch-caption-export-v1` over multiple clip targets
 19. inspect workflow artifacts/results through the integration boundary
-20. capture a screenshot artifact
+20. inspect diagnostics/recovery visibility in-app
+21. capture a screenshot artifact
 
 The smoke path is intentionally fixture-driven and deterministic:
 
 - fixture transcription adapter
 - deterministic waveform override for the workflow cleanup path
 - local temp projects only
+
+## Packaged validation
+
+Stage 10 adds a separate packaged smoke path:
+
+- `pnpm package:mac`
+- `pnpm smoke:packaged`
+
+That path validates:
+
+- packaged app boot
+- packaged worker launch
+- local control transport availability in packaged mode
+- end-to-end project/import/preview/transcript/export/workflow behavior from the packaged artifact
+
+Current limitation:
+
+- the packaged worker currently runs through the local Node runtime during validation because that is the stable ABI match for the current unsigned packaged SQLite path
+
+## Performance budgets
+
+Stage 10 adds fixture-backed budgets for practical regression detection.
+
+Current budgeted paths include:
+
+- project open
+- editor snapshot
+- preview seek
+- export render-plan compilation
+- fixture transcription
+- workflow session snapshot
+
+The thresholds are intentionally generous enough for CI stability while still catching obvious performance regressions.
 
 ## Verification posture per stage
 
@@ -126,6 +166,7 @@ For shipped work the verification bar remains:
 - `pnpm lint`
 - `pnpm test`
 - `pnpm smoke`
+- `pnpm smoke:packaged` for Stage 10 packaging changes
 
 When workflow or transport architecture changes, update tests and smoke in the same change set.
 

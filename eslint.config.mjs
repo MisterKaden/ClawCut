@@ -14,11 +14,23 @@ export default tseslint.config(
       "output",
       "playwright-report",
       ".vite",
-      "apps/desktop/out"
+      "apps/desktop/out",
+      "apps/desktop/dist",
+      "apps/desktop/dist/**"
     ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: "module",
+      globals: {
+        ...globals.node
+      }
+    }
+  },
   {
     files: ["**/*.ts", "**/*.tsx"],
     languageOptions: {

@@ -1,5 +1,5 @@
 import type { CaptionTemplateId, SubtitleFormat } from "./captions";
-import type { JobError } from "./jobs";
+import type { JobError, RecoveryInfo } from "./jobs";
 
 export const RENDER_PLAN_VERSION = 1;
 export const FFMPEG_EXECUTION_SPEC_VERSION = 1;
@@ -382,6 +382,7 @@ export interface ExportRun {
   verification: ExportVerificationResult | null;
   diagnostics: ExportDiagnostics;
   error: JobError | null;
+  recovery: RecoveryInfo;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;

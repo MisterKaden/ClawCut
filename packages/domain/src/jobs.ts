@@ -7,6 +7,8 @@ import type {
 } from "./render";
 
 export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type RecoveryAction = "retry" | "resume";
+export type RecoveryState = "none" | "recoverable" | "handled" | "dismissed";
 export type JobType =
   | "ingest"
   | DerivedAssetType
@@ -27,6 +29,16 @@ export interface JobError {
   details?: string;
 }
 
+export interface RecoveryInfo {
+  state: RecoveryState;
+  interruptedAt: string | null;
+  reason: string | null;
+  recommendedAction: RecoveryAction | null;
+  handledAt: string | null;
+  dismissedAt: string | null;
+  replacementRunId: string | null;
+}
+
 export interface JobResult {
   summary?: string;
   outputPaths?: string[];
@@ -45,6 +57,7 @@ export interface JobBase {
   createdAt: string;
   updatedAt: string;
   errorMessage: string | null;
+  recovery: RecoveryInfo;
 }
 
 export interface IngestJob extends JobBase {
@@ -100,3 +113,57 @@ export type MediaJobStatus = JobState;
 export type MediaJobKind = "ingest" | DerivedAssetType;
 export type MediaJobBase = JobBase;
 export type MediaJob = Job;
+
+export function createEmptyRecoveryInfo(): RecoveryInfo {
+  return {
+    state: "none",
+    interruptedAt: null,
+    reason: null,
+    recommendedAction: null,
+    handledAt: null,
+    dismissedAt: null,
+    replacementRunId: null
+  };
+}
+
+export function createRecoverableRecoveryInfo(input: {
+  interruptedAt: string;
+  reason: string;
+  recommendedAction: RecoveryAction;
+}): RecoveryInfo {
+  return {
+    state: "recoverable",
+    interruptedAt: input.interruptedAt,
+    reason: input.reason,
+    recommendedAction: input.recommendedAction,
+    handledAt: null,
+    dismissedAt: null,
+    replacementRunId: null
+  };
+}
+
+export function markRecoveryHandled(
+  recovery: RecoveryInfo,
+  input: {
+    handledAt: string;
+    replacementRunId?: string | null;
+  }
+): RecoveryInfo {
+  return {
+    ...recovery,
+    state: "handled",
+    handledAt: input.handledAt,
+    replacementRunId: input.replacementRunId ?? null
+  };
+}
+
+export function markRecoveryDismissed(
+  recovery: RecoveryInfo,
+  dismissedAt: string
+): RecoveryInfo {
+  return {
+    ...recovery,
+    state: "dismissed",
+    dismissedAt
+  };
+}

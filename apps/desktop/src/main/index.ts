@@ -1,4 +1,5 @@
 import * as electron from "electron";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createMediaWorkerHost } from "@clawcut/media-worker";
@@ -8,11 +9,17 @@ import { LocalApiController } from "./local-api";
 import { createPreviewBridge } from "./preview-bridge";
 import { createMainWindow } from "./window";
 
-const workspaceRoot = process.env.CLAWCUT_WORKSPACE_ROOT ?? process.cwd();
 electron.app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 let mainWindow: electron.BrowserWindow | null = null;
 let localApiController: LocalApiController | null = null;
 let mediaWorkerHost: ReturnType<typeof createMediaWorkerHost> | null = null;
+
+async function createSessionLogDirectory(userDataPath: string): Promise<string> {
+  const sessionId = `${new Date().toISOString().replace(/[:.]/gu, "-")}-${process.pid}`;
+  const directory = join(userDataPath, "logs", "sessions", sessionId);
+  await mkdir(directory, { recursive: true });
+  return directory;
+}
 
 function resolveCurrentWindow(): electron.BrowserWindow | null {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -25,12 +32,19 @@ function resolveCurrentWindow(): electron.BrowserWindow | null {
 async function bootstrap(): Promise<void> {
   const { app, BrowserWindow } = electron;
   await app.whenReady();
+  const userDataPath = app.getPath("userData");
+  const workspaceRoot = app.isPackaged
+    ? app.getAppPath()
+    : process.env.CLAWCUT_WORKSPACE_ROOT ?? process.cwd();
+  const sessionLogDirectory = await createSessionLogDirectory(userDataPath);
   mediaWorkerHost = createMediaWorkerHost({
     workspaceRoot,
-    userDataPath: app.getPath("userData")
+    userDataPath,
+    sessionLogDirectory
   });
   localApiController = new LocalApiController({
-    configPath: join(app.getPath("userData"), "local-api.json"),
+    configPath: join(userDataPath, "local-api.json"),
+    sessionLogDirectory,
     worker: mediaWorkerHost,
     preview: createPreviewBridge(resolveCurrentWindow)
   });
@@ -77,6 +91,18 @@ async function bootstrap(): Promise<void> {
     },
     async executeWorkflowCommand(input) {
       return mediaWorkerHost!.executeWorkflowCommand(input);
+    },
+    async getDiagnosticsSessionSnapshot(input) {
+      const snapshot = await mediaWorkerHost!.getDiagnosticsSessionSnapshot(input);
+      const localApiStatus = localApiController?.getStatus();
+      return {
+        ...snapshot,
+        sessionLogDirectory: snapshot.sessionLogDirectory ?? localApiStatus?.sessionLogDirectory ?? null,
+        requestLogPath: localApiStatus?.requestLogPath ?? snapshot.requestLogPath
+      };
+    },
+    async executeDiagnosticsAction(input) {
+      return mediaWorkerHost!.executeDiagnosticsAction(input);
     },
     async pickImportPaths() {
       throw new Error("pickImportPaths is handled by the Electron IPC layer.");

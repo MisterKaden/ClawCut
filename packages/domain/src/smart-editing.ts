@@ -1,5 +1,10 @@
 import { generateId } from "./id";
-import type { JobError, JobState } from "./jobs";
+import {
+  createEmptyRecoveryInfo,
+  type JobError,
+  type JobState,
+  type RecoveryInfo
+} from "./jobs";
 import type { MediaItem } from "./media";
 import type {
   Transcript,
@@ -161,6 +166,7 @@ export interface SmartAnalysisRun {
   status: JobState;
   diagnostics: SmartAnalysisDiagnostics;
   error: JobError | null;
+  recovery: RecoveryInfo;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -598,6 +604,7 @@ export function createSmartAnalysisRun(input: {
     status: "queued",
     diagnostics: createEmptySmartAnalysisDiagnostics(),
     error: null,
+    recovery: createEmptyRecoveryInfo(),
     createdAt: timestamp,
     updatedAt: timestamp,
     startedAt: null,

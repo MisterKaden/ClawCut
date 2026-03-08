@@ -17,10 +17,13 @@
   "scripts": {
     "dev": "pnpm --filter @clawcut/desktop dev",
     "build": "pnpm --filter @clawcut/desktop build",
+    "package": "pnpm package:mac",
+    "package:mac": "pnpm --filter @clawcut/desktop package:mac",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "eslint .",
     "test": "vitest run",
-    "smoke": "pnpm build && tsx scripts/smoke.ts"
+    "smoke": "pnpm build && tsx scripts/smoke.ts",
+    "smoke:packaged": "pnpm package:mac && tsx scripts/smoke-packaged.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
@@ -33,6 +36,7 @@
     "@typescript-eslint/parser": "^8.24.1",
     "@vitejs/plugin-react": "^5.1.0",
     "electron": "^40.8.0",
+    "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.0",
     "esbuild": "0.27.3",
     "eslint": "^9.21.0",

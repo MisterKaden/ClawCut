@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import {
   analyzeSilenceFromWaveform,
+  markRecoveryHandled,
   analyzeTranscriptFillerWords,
   analyzeWeakTranscriptSegments,
   compileSmartEditPlan,
@@ -38,6 +39,7 @@ import {
 } from "./project-repository";
 import {
   createSmartAnalysisRunRecord,
+  getSmartAnalysisRun,
   getSuggestionSet,
   listSmartAnalysisRuns,
   listSmartEditPlans,
@@ -832,4 +834,99 @@ export async function executeSmartCommand(
       )
     };
   }
+}
+
+export async function retrySmartAnalysisRun(
+  directory: string,
+  analysisRunId: string
+): Promise<ExecuteSmartCommandResult> {
+  const paths = resolveProjectPaths(directory);
+  const run = getSmartAnalysisRun(paths.databasePath, analysisRunId);
+
+  if (!run) {
+    throw new WorkerError(
+      "SMART_ANALYSIS_RUN_NOT_FOUND",
+      `Smart analysis run ${analysisRunId} could not be found.`
+    );
+  }
+
+  let command: SmartCommand;
+
+  switch (run.request.analysisType) {
+    case "silence":
+      if (!run.request.target.timelineId || !run.request.target.clipId) {
+        throw new WorkerError(
+          "INVALID_ANALYSIS_TARGET",
+          "The interrupted silence analysis run no longer points at a valid clip target."
+        );
+      }
+      command = {
+        type: "AnalyzeSilence",
+        timelineId: run.request.target.timelineId,
+        clipId: run.request.target.clipId,
+        options: run.request.options
+      };
+      break;
+    case "weak-segments":
+      if (!run.request.target.transcriptId) {
+        throw new WorkerError(
+          "INVALID_ANALYSIS_TARGET",
+          "The interrupted weak-segment analysis run no longer points at a valid transcript."
+        );
+      }
+      command = {
+        type: "AnalyzeWeakSegments",
+        transcriptId: run.request.target.transcriptId,
+        options: run.request.options
+      };
+      break;
+    case "filler-words":
+      if (!run.request.target.transcriptId) {
+        throw new WorkerError(
+          "INVALID_ANALYSIS_TARGET",
+          "The interrupted filler-word analysis run no longer points at a valid transcript."
+        );
+      }
+      command = {
+        type: "FindFillerWords",
+        transcriptId: run.request.target.transcriptId,
+        options: run.request.options
+      };
+      break;
+    case "highlights":
+      if (!run.request.target.transcriptId) {
+        throw new WorkerError(
+          "INVALID_ANALYSIS_TARGET",
+          "The interrupted highlight analysis run no longer points at a valid transcript."
+        );
+      }
+      command = {
+        type: "GenerateHighlightSuggestions",
+        transcriptId: run.request.target.transcriptId,
+        options: run.request.options
+      };
+      break;
+  }
+
+  const result = await executeSmartCommand({
+    directory,
+    command
+  });
+
+  if (result.result.ok && "run" in result.result) {
+    updateSmartAnalysisRunRecord(paths.databasePath, run.id, {
+      recovery: markRecoveryHandled(run.recovery, {
+        handledAt: nowIso(),
+        replacementRunId: result.result.run.id
+      })
+    });
+    updateJobRecord(paths.databasePath, run.jobId, {
+      recovery: markRecoveryHandled(run.recovery, {
+        handledAt: nowIso(),
+        replacementRunId: result.result.run.id
+      })
+    });
+  }
+
+  return result;
 }

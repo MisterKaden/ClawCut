@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { generateId } from "./id";
-import type { JobError, JobState } from "./jobs";
+import type { JobError, JobState, RecoveryInfo } from "./jobs";
 
 export const TRANSCRIPTION_PROVIDERS = ["faster-whisper"] as const;
 export const TRANSCRIPTION_MODELS = ["tiny", "base", "small", "medium"] as const;
@@ -300,6 +300,7 @@ export interface TranscriptionRun {
   rawArtifactPath: string | null;
   diagnostics: TranscriptJobDiagnostics;
   error: JobError | null;
+  recovery: RecoveryInfo;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;

@@ -112,6 +112,59 @@ export type CaptionSessionSnapshot = DomainCaptionSessionSnapshot;
 export type SmartSessionSnapshot = DomainSmartSessionSnapshot;
 export type WorkflowSessionSnapshot = DomainWorkflowSessionSnapshot;
 
+export type DiagnosticsRecoverableKind =
+  | "job"
+  | "export-run"
+  | "transcription-run"
+  | "smart-analysis-run"
+  | "workflow-run";
+
+export interface DiagnosticsRecoverableItem {
+  id: string;
+  kind: DiagnosticsRecoverableKind;
+  jobId: string | null;
+  title: string;
+  status: string;
+  recommendedAction: "retry" | "resume";
+  reason: string;
+  interruptedAt: string;
+  logPath: string | null;
+  artifactPath: string | null;
+}
+
+export interface DiagnosticsFailureRecord {
+  id: string;
+  subsystem: "worker" | "export" | "transcription" | "smart" | "workflow" | "local-api";
+  severity: "warning" | "error";
+  code: string;
+  message: string;
+  details?: string;
+  occurredAt: string;
+  requestId: string | null;
+  jobId: string | null;
+  runId: string | null;
+  logPath: string | null;
+  artifactPath: string | null;
+}
+
+export interface DiagnosticsMigrationStatus {
+  projectSchemaVersion: number;
+  databaseSchemaVersion: number;
+  projectDocumentMigrated: boolean;
+  databaseMigrated: boolean;
+}
+
+export interface DiagnosticsSessionSnapshot {
+  directory: string;
+  projectName: string;
+  sessionLogDirectory: string | null;
+  requestLogPath: string | null;
+  workerLogPath: string | null;
+  recentFailures: DiagnosticsFailureRecord[];
+  recoverableItems: DiagnosticsRecoverableItem[];
+  migration: DiagnosticsMigrationStatus;
+}
+
 export interface CreateProjectInput {
   directory: string;
   name?: string;
@@ -228,6 +281,10 @@ export interface GetWorkflowSessionSnapshotInput {
   directory: string;
 }
 
+export interface GetDiagnosticsSessionSnapshotInput {
+  directory: string;
+}
+
 export interface ExecuteWorkflowCommandInput {
   directory: string;
   command: WorkflowCommand;
@@ -237,6 +294,47 @@ export interface ExecuteWorkflowCommandResult {
   snapshot: WorkflowSessionSnapshot;
   result: WorkflowCommandResult;
 }
+
+export type DiagnosticsAction =
+  | {
+      type: "RetryRecoverableItem";
+      targetKind: DiagnosticsRecoverableKind;
+      targetId: string;
+    }
+  | {
+      type: "ResumeRecoverableItem";
+      targetKind: DiagnosticsRecoverableKind;
+      targetId: string;
+    }
+  | {
+      type: "DismissRecoverableItem";
+      targetKind: DiagnosticsRecoverableKind;
+      targetId: string;
+    };
+
+export interface ExecuteDiagnosticsActionInput {
+  directory: string;
+  action: DiagnosticsAction;
+}
+
+export type ExecuteDiagnosticsActionResult =
+  | {
+      snapshot: DiagnosticsSessionSnapshot;
+      result: {
+        ok: true;
+        actionType: DiagnosticsAction["type"];
+        targetKind: DiagnosticsRecoverableKind;
+        targetId: string;
+      };
+    }
+  | {
+      snapshot: DiagnosticsSessionSnapshot;
+      result: {
+        ok: false;
+        actionType: DiagnosticsAction["type"];
+        error: SerializedWorkerError;
+      };
+    };
 
 export type LocalApiOperationKind = "command" | "query";
 export type LocalApiSafetyClass = "read-only" | "mutating" | "high-impact";
@@ -339,6 +437,7 @@ export const LOCAL_API_QUERY_NAMES = [
   "workflow.artifacts",
   "workflow.artifact",
   "brandKits.list",
+  "diagnostics.session",
   "jobs.list",
   "jobs.get"
 ] as const;
@@ -651,6 +750,7 @@ export interface LocalApiQueryInputMap {
   "workflow.artifacts": LocalApiWorkflowRunGetInput;
   "workflow.artifact": LocalApiWorkflowArtifactGetInput;
   "brandKits.list": GetWorkflowSessionSnapshotInput;
+  "diagnostics.session": GetDiagnosticsSessionSnapshotInput;
   "jobs.list": GetProjectSnapshotInput;
   "jobs.get": LocalApiJobDetailsInput;
 }
@@ -685,6 +785,7 @@ export interface LocalApiQueryResultMap {
   "workflow.artifacts": WorkflowArtifact[];
   "workflow.artifact": WorkflowArtifact | null;
   "brandKits.list": BrandKit[];
+  "diagnostics.session": DiagnosticsSessionSnapshot;
   "jobs.list": Job[];
   "jobs.get": LocalApiJobDetails;
 }
@@ -835,6 +936,8 @@ export interface LocalApiStatus {
   openClawTools: OpenClawToolDefinition[];
   openClawManifest: OpenClawToolManifest;
   eventStream: LocalApiEventStreamDescriptor;
+  sessionLogDirectory: string | null;
+  requestLogPath: string | null;
   recentRequests: LocalApiRequestLogEntry[];
   lastError: SerializedWorkerError | null;
 }
@@ -897,6 +1000,12 @@ export interface ClawcutApi {
   executeWorkflowCommand(
     input: ExecuteWorkflowCommandInput
   ): Promise<ExecuteWorkflowCommandResult>;
+  getDiagnosticsSessionSnapshot(
+    input: GetDiagnosticsSessionSnapshotInput
+  ): Promise<DiagnosticsSessionSnapshot>;
+  executeDiagnosticsAction(
+    input: ExecuteDiagnosticsActionInput
+  ): Promise<ExecuteDiagnosticsActionResult>;
   pickImportPaths(input?: PickImportPathsInput): Promise<PickImportPathsResult>;
   importMediaPaths(input: ImportMediaPathsInput): Promise<ImportMediaPathsResult>;
   refreshMediaHealth(input: RefreshMediaHealthInput): Promise<ProjectWorkspaceSnapshot>;
@@ -923,6 +1032,8 @@ export const IPC_CHANNELS = {
   executeSmartCommand: "clawcut:execute-smart-command",
   getWorkflowSessionSnapshot: "clawcut:get-workflow-session-snapshot",
   executeWorkflowCommand: "clawcut:execute-workflow-command",
+  getDiagnosticsSessionSnapshot: "clawcut:get-diagnostics-session-snapshot",
+  executeDiagnosticsAction: "clawcut:execute-diagnostics-action",
   pickImportPaths: "clawcut:pick-import-paths",
   importMediaPaths: "clawcut:import-media-paths",
   refreshMediaHealth: "clawcut:refresh-media-health",

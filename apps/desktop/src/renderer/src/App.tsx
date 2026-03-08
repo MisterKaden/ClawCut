@@ -17,9 +17,11 @@ import type {
 import { getTimelineEndUs } from "@clawcut/domain";
 import type {
   LocalApiStatus,
+  DiagnosticsSessionSnapshot,
   EditorSessionSnapshot,
   CaptionSessionSnapshot,
   ExecuteCaptionCommandResult,
+  ExecuteDiagnosticsActionResult,
   ExportSessionSnapshot,
   ExecuteEditorCommandResult,
   ExecuteExportCommandResult,
@@ -272,6 +274,9 @@ export function App() {
   const [captionSnapshot, setCaptionSnapshot] = useState<CaptionSessionSnapshot | null>(null);
   const [smartSnapshot, setSmartSnapshot] = useState<SmartSessionSnapshot | null>(null);
   const [workflowSnapshot, setWorkflowSnapshot] = useState<WorkflowSessionSnapshot | null>(null);
+  const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<DiagnosticsSessionSnapshot | null>(
+    null
+  );
   const [selectedExportPresetId, setSelectedExportPresetId] = useState<ExportPresetId | null>(null);
   const [selectedExportTargetKey, setSelectedExportTargetKey] = useState("timeline");
   const [customRangeStartSeconds, setCustomRangeStartSeconds] = useState("0");
@@ -307,6 +312,7 @@ export function App() {
       setCaptionSnapshot(null);
       setSmartSnapshot(null);
       setWorkflowSnapshot(null);
+      setDiagnosticsSnapshot(null);
       setSelectedExportPresetId(null);
       setSelectedExportTargetKey("timeline");
       setCustomRangeStartSeconds("0");
@@ -444,6 +450,14 @@ export function App() {
     }
   });
 
+  const refreshDiagnosticsSnapshotSilently = useEffectEvent(async (directory: string) => {
+    try {
+      await loadDiagnosticsSession(directory);
+    } catch {
+      // Keep the visible state stable during background polling.
+    }
+  });
+
   useEffect(() => {
     if (!snapshot) {
       return;
@@ -513,6 +527,20 @@ export function App() {
       window.clearInterval(intervalId);
     };
   }, [refreshWorkflowSnapshotSilently, workflowSnapshot]);
+
+  useEffect(() => {
+    if (!diagnosticsSnapshot) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshDiagnosticsSnapshotSilently(diagnosticsSnapshot.directory);
+    }, 1_500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [diagnosticsSnapshot, refreshDiagnosticsSnapshotSilently]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -587,6 +615,16 @@ export function App() {
     return nextWorkflowSnapshot;
   }
 
+  async function loadDiagnosticsSession(directory: string): Promise<DiagnosticsSessionSnapshot> {
+    const nextDiagnosticsSnapshot = await window.clawcut.getDiagnosticsSessionSnapshot({
+      directory
+    });
+    startTransition(() => {
+      setDiagnosticsSnapshot(nextDiagnosticsSnapshot);
+    });
+    return nextDiagnosticsSnapshot;
+  }
+
   async function withOperation<T>(
     message: string,
     task: () => Promise<T>
@@ -630,7 +668,8 @@ export function App() {
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
       loadSmartSession(result.directory),
-      loadWorkflowSession(result.directory)
+      loadWorkflowSession(result.directory),
+      loadDiagnosticsSession(result.directory)
     ]);
   }
 
@@ -651,7 +690,8 @@ export function App() {
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
       loadSmartSession(result.directory),
-      loadWorkflowSession(result.directory)
+      loadWorkflowSession(result.directory),
+      loadDiagnosticsSession(result.directory)
     ]);
   }
 
@@ -681,7 +721,8 @@ export function App() {
       loadExportSession(result.snapshot.directory),
       loadCaptionSession(result.snapshot.directory),
       loadSmartSession(result.snapshot.directory),
-      loadWorkflowSession(result.snapshot.directory)
+      loadWorkflowSession(result.snapshot.directory),
+      loadDiagnosticsSession(result.snapshot.directory)
     ]);
   }
 
@@ -717,7 +758,8 @@ export function App() {
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
       loadSmartSession(result.directory),
-      loadWorkflowSession(result.directory)
+      loadWorkflowSession(result.directory),
+      loadDiagnosticsSession(result.directory)
     ]);
   }
 
@@ -742,7 +784,8 @@ export function App() {
       loadExportSession(result.directory),
       loadCaptionSession(result.directory),
       loadSmartSession(result.directory),
-      loadWorkflowSession(result.directory)
+      loadWorkflowSession(result.directory),
+      loadDiagnosticsSession(result.directory)
     ]);
   }
 
@@ -780,7 +823,8 @@ export function App() {
       loadExportSession(result.snapshot.directory),
       loadCaptionSession(result.snapshot.directory),
       loadSmartSession(result.snapshot.directory),
-      loadWorkflowSession(result.snapshot.directory)
+      loadWorkflowSession(result.snapshot.directory),
+      loadDiagnosticsSession(result.snapshot.directory)
     ]);
   }
 
@@ -833,6 +877,8 @@ export function App() {
       setExportSnapshot(result.snapshot);
     });
 
+    await loadDiagnosticsSession(snapshot.directory);
+
     return result;
   }
 
@@ -858,7 +904,11 @@ export function App() {
     startTransition(() => {
       setCaptionSnapshot(result.snapshot);
     });
-    await Promise.all([loadEditorSession(snapshot.directory), loadSmartSession(snapshot.directory)]);
+    await Promise.all([
+      loadEditorSession(snapshot.directory),
+      loadSmartSession(snapshot.directory),
+      loadDiagnosticsSession(snapshot.directory)
+    ]);
 
     return result;
   }
@@ -924,7 +974,8 @@ export function App() {
       loadEditorSession(snapshot.directory),
       loadExportSession(snapshot.directory),
       loadCaptionSession(snapshot.directory),
-      loadSmartSession(snapshot.directory)
+      loadSmartSession(snapshot.directory),
+      loadDiagnosticsSession(snapshot.directory)
     ]);
 
     return result;
@@ -1086,6 +1137,38 @@ export function App() {
     setImportFeedback("Generated a new local API token for trusted automation clients.");
   }
 
+  async function handleDiagnosticsAction(
+    action: Parameters<typeof window.clawcut.executeDiagnosticsAction>[0]["action"]
+  ): Promise<ExecuteDiagnosticsActionResult | undefined> {
+    if (!snapshot) {
+      return undefined;
+    }
+
+    const result = await withOperation("Updating recovery item…", async () =>
+      window.clawcut.executeDiagnosticsAction({
+        directory: snapshot.directory,
+        action
+      })
+    );
+
+    if (!result) {
+      return undefined;
+    }
+
+    startTransition(() => {
+      setDiagnosticsSnapshot(result.snapshot);
+    });
+
+    if (!result.result.ok) {
+      setOperationState({
+        kind: "error",
+        message: result.result.error.message
+      });
+    }
+
+    return result;
+  }
+
   async function handleRetryExport(exportRunId: string): Promise<void> {
     await handleExecuteExportCommand(
       {
@@ -1129,13 +1212,12 @@ export function App() {
         <div className="hero__backdrop" />
         <div className="hero__masthead">
           <div>
-            <p className="eyebrow">Clawcut / Stage 8 smart editing foundations</p>
-            <h1>Package trusted editing, captions, exports, and smart analysis into reusable workflows with explicit approvals.</h1>
+            <p className="eyebrow">Clawcut / Stage 10 hardening and recovery</p>
+            <h1>Recover interrupted work, validate packaged builds, and surface machine-readable diagnostics.</h1>
             <p className="lede">
-              Stage 9 turns Clawcut’s lower-level media, caption, export, and smart-analysis
-              primitives into resumable workflow runs, brand-aware presets, approval checkpoints,
-              and batch-safe automation that still stays grounded in the same typed command
-              system.
+              Stage 10 tightens Clawcut around recoverable operational runs, sequential database
+              migrations, session-linked diagnostics, and the packaged-build validation path needed
+              for trustworthy desktop and OpenClaw automation.
             </p>
           </div>
 
@@ -1349,6 +1431,12 @@ export function App() {
             when the transport is running.
           </p>
 
+          {localApiStatus?.requestLogPath ? (
+            <p className="status-panel__hint">
+              Request logs are persisted at <code>{localApiStatus.requestLogPath}</code>.
+            </p>
+          ) : null}
+
           {localApiStatus?.recentRequests.length ? (
             <div className="local-api-panel__requests">
               {localApiStatus.recentRequests.slice(0, 4).map((entry) => (
@@ -1373,6 +1461,131 @@ export function App() {
             </p>
           ) : null}
         </section>
+
+        {diagnosticsSnapshot ? (
+          <section className="status-board diagnostics-panel" data-testid="diagnostics-panel">
+            <header className="panel-header">
+              <div>
+                <p className="eyebrow eyebrow--muted">Diagnostics and recovery</p>
+                <h2>Interrupted work, logs, and migration state</h2>
+              </div>
+              <span
+                className={
+                  diagnosticsSnapshot.recoverableItems.length > 0
+                    ? "tone-chip tone-chip--warning"
+                    : diagnosticsSnapshot.recentFailures.length > 0
+                      ? "tone-chip tone-chip--danger"
+                      : "tone-chip tone-chip--ok"
+                }
+              >
+                {diagnosticsSnapshot.recoverableItems.length > 0
+                  ? `${diagnosticsSnapshot.recoverableItems.length} recoverable`
+                  : diagnosticsSnapshot.recentFailures.length > 0
+                    ? "Recent failures"
+                    : "Stable"}
+              </span>
+            </header>
+
+            <div className="status-board__grid">
+              <div>
+                <span className="meta-label">Project schema</span>
+                <strong>v{diagnosticsSnapshot.migration.projectSchemaVersion}</strong>
+              </div>
+              <div>
+                <span className="meta-label">DB schema</span>
+                <strong>v{diagnosticsSnapshot.migration.databaseSchemaVersion}</strong>
+              </div>
+              <div>
+                <span className="meta-label">Session logs</span>
+                <strong>{diagnosticsSnapshot.sessionLogDirectory ?? "Unavailable"}</strong>
+              </div>
+              <div>
+                <span className="meta-label">Worker diagnostics</span>
+                <strong>{diagnosticsSnapshot.workerLogPath ?? "Unavailable"}</strong>
+              </div>
+            </div>
+
+            {diagnosticsSnapshot.recoverableItems.length ? (
+              <div className="diagnostics-panel__list">
+                {diagnosticsSnapshot.recoverableItems.slice(0, 4).map((item) => (
+                  <div className="diagnostics-card" key={`${item.kind}:${item.id}`}>
+                    <div className="diagnostics-card__header">
+                      <div>
+                        <strong>{item.title}</strong>
+                        <p>{item.reason}</p>
+                      </div>
+                      <span className="tone-chip tone-chip--warning">{item.status}</span>
+                    </div>
+                    <p className="diagnostics-card__meta">
+                      {item.kind} · {formatDate(item.interruptedAt)}
+                    </p>
+                    <div className="button-row">
+                      <button
+                        className="secondary-button"
+                        onClick={() =>
+                          void handleDiagnosticsAction({
+                            type:
+                              item.recommendedAction === "resume"
+                                ? "ResumeRecoverableItem"
+                                : "RetryRecoverableItem",
+                            targetKind: item.kind,
+                            targetId: item.id
+                          })
+                        }
+                        type="button"
+                      >
+                        {item.recommendedAction === "resume" ? "Resume" : "Retry"}
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() =>
+                          void handleDiagnosticsAction({
+                            type: "DismissRecoverableItem",
+                            targetKind: item.kind,
+                            targetId: item.id
+                          })
+                        }
+                        type="button"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-inline">No interrupted runs need recovery right now.</div>
+            )}
+
+            {diagnosticsSnapshot.recentFailures.length ? (
+              <div className="diagnostics-panel__list">
+                {diagnosticsSnapshot.recentFailures.slice(0, 4).map((failure) => (
+                  <div className="diagnostics-card diagnostics-card--failure" key={failure.id}>
+                    <div className="diagnostics-card__header">
+                      <div>
+                        <strong>{failure.code}</strong>
+                        <p>{failure.message}</p>
+                      </div>
+                      <span
+                        className={
+                          failure.severity === "warning"
+                            ? "tone-chip tone-chip--warning"
+                            : "tone-chip tone-chip--danger"
+                        }
+                      >
+                        {failure.subsystem}
+                      </span>
+                    </div>
+                    <p className="diagnostics-card__meta">
+                      {formatDate(failure.occurredAt)}
+                      {failure.logPath ? ` · ${failure.logPath}` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
       </section>
 
       <PreviewPanel />
