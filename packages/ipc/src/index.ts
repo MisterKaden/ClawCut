@@ -23,8 +23,10 @@ import type {
   SmartSessionSnapshot as DomainSmartSessionSnapshot,
   Timeline,
   WorkflowApproval,
+  WorkflowAuditEvent,
   WorkflowArtifact,
   WorkflowCandidatePackage,
+  WorkflowCandidateReviewStatus,
   WorkflowCommand,
   WorkflowCommandResult,
   WorkflowProfile,
@@ -402,7 +404,9 @@ export const LOCAL_API_COMMAND_NAMES = [
   "workflow.retryStep",
   "workflow.approveStep",
   "workflow.rejectStep",
+  "workflow.reviewCandidatePackage",
   "workflow.exportCandidatePackage",
+  "workflow.seekPreviewToCandidatePackage",
   "workflowProfiles.create",
   "workflowProfiles.update",
   "workflowProfiles.delete",
@@ -451,6 +455,7 @@ export const LOCAL_API_QUERY_NAMES = [
   "workflow.artifact",
   "workflow.candidatePackages",
   "workflow.candidatePackage",
+  "workflow.auditEvents",
   "workflowProfiles.list",
   "workflowProfiles.inspect",
   "schedules.list",
@@ -567,6 +572,24 @@ export interface LocalApiWorkflowCandidatePackageGetInput {
   candidatePackageId: string;
 }
 
+export interface LocalApiWorkflowCandidatePackageReviewInput
+  extends LocalApiWorkflowCandidatePackageGetInput {
+  reviewStatus: WorkflowCandidateReviewStatus;
+  reviewNotes?: string | null;
+}
+
+export interface LocalApiWorkflowCandidatePackagePreviewInput
+  extends LocalApiWorkflowCandidatePackageGetInput {
+  anchor?: "start" | "midpoint" | "end";
+}
+
+export interface LocalApiWorkflowCandidatePackagePreviewResult {
+  candidatePackageId: string;
+  positionUs: number;
+  loadedTimeline: boolean;
+  preview: PreviewCommandResult;
+}
+
 export interface LocalApiSmartSuggestionSetGetInput {
   directory: string;
   suggestionSetId: string;
@@ -676,7 +699,9 @@ export interface LocalApiCommandInputMap {
   "workflow.retryStep": LocalApiWorkflowOperationInput<"RetryWorkflowStep">;
   "workflow.approveStep": LocalApiWorkflowOperationInput<"ApproveWorkflowStep">;
   "workflow.rejectStep": LocalApiWorkflowOperationInput<"RejectWorkflowStep">;
+  "workflow.reviewCandidatePackage": LocalApiWorkflowCandidatePackageReviewInput;
   "workflow.exportCandidatePackage": LocalApiWorkflowOperationInput<"ExportCandidatePackage">;
+  "workflow.seekPreviewToCandidatePackage": LocalApiWorkflowCandidatePackagePreviewInput;
   "workflowProfiles.create": LocalApiWorkflowOperationInput<"CreateWorkflowProfile">;
   "workflowProfiles.update": LocalApiWorkflowOperationInput<"UpdateWorkflowProfile">;
   "workflowProfiles.delete": LocalApiWorkflowOperationInput<"DeleteWorkflowProfile">;
@@ -755,7 +780,9 @@ export interface LocalApiCommandResultMap {
   "workflow.retryStep": ExecuteWorkflowCommandResult;
   "workflow.approveStep": ExecuteWorkflowCommandResult;
   "workflow.rejectStep": ExecuteWorkflowCommandResult;
+  "workflow.reviewCandidatePackage": ExecuteWorkflowCommandResult;
   "workflow.exportCandidatePackage": ExecuteWorkflowCommandResult;
+  "workflow.seekPreviewToCandidatePackage": LocalApiWorkflowCandidatePackagePreviewResult;
   "workflowProfiles.create": ExecuteWorkflowCommandResult;
   "workflowProfiles.update": ExecuteWorkflowCommandResult;
   "workflowProfiles.delete": ExecuteWorkflowCommandResult;
@@ -805,6 +832,7 @@ export interface LocalApiQueryInputMap {
   "workflow.artifact": LocalApiWorkflowArtifactGetInput;
   "workflow.candidatePackages": GetWorkflowSessionSnapshotInput;
   "workflow.candidatePackage": LocalApiWorkflowCandidatePackageGetInput;
+  "workflow.auditEvents": GetWorkflowSessionSnapshotInput;
   "workflowProfiles.list": GetWorkflowSessionSnapshotInput;
   "workflowProfiles.inspect": LocalApiWorkflowProfileGetInput;
   "schedules.list": GetWorkflowSessionSnapshotInput;
@@ -846,6 +874,7 @@ export interface LocalApiQueryResultMap {
   "workflow.artifact": WorkflowArtifact | null;
   "workflow.candidatePackages": WorkflowCandidatePackage[];
   "workflow.candidatePackage": WorkflowCandidatePackage | null;
+  "workflow.auditEvents": WorkflowAuditEvent[];
   "workflowProfiles.list": WorkflowProfile[];
   "workflowProfiles.inspect": WorkflowProfile | null;
   "schedules.list": WorkflowSchedule[];

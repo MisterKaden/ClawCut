@@ -101,6 +101,17 @@
 - Artifacts are stored under `.clawcut/workflows/<workflowRunId>/`.
   - Reason: worker outputs stay inspectable, grouped by run, and easy to clean or archive later.
 
+## Workflow audit and candidate review
+
+- Workflow audit events are persisted operational records rather than inferred from logs.
+  - Reason: OpenClaw and local operators need a shared machine-readable history of workflow state transitions, artifact creation, approvals, and candidate review activity.
+
+- Candidate-package review is explicit operational state separate from export state.
+  - Reason: “candidate discovered”, “candidate approved”, and “candidate exported” are distinct workflow facts and should stay independently queryable.
+
+- Candidate-package preview remains a control-surface command, not a side effect hidden inside export/review actions.
+  - Reason: reviewable automation requires an explicit inspect step before any higher-impact action such as export.
+
 ## Batch scope
 
 - Stage 11 batch execution remains single-project only.

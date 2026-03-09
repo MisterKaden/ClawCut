@@ -16,10 +16,14 @@ describe("openclaw plugin descriptor", () => {
     expect(manifest.protocolVersion).toBe("1");
     expect(manifest.tools.some((tool) => tool.name === "clawcut.start_export")).toBe(true);
     expect(manifest.tools.some((tool) => tool.name === "clawcut.capture_preview_frame")).toBe(true);
+    expect(manifest.tools.some((tool) => tool.name === "clawcut.list_candidate_packages")).toBe(true);
+    expect(manifest.tools.some((tool) => tool.name === "clawcut.review_candidate_package")).toBe(true);
     expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.get_project_summary");
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_export");
     expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflows");
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_workflow");
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflow_audit_events");
+    expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.review_candidate_package");
     expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.transport.kind).toBe("local-http");
     expect(CLAWCUT_OPENCLAW_PLUGIN_DESCRIPTOR.defaultEnabledTools).toContain(
       "clawcut.capture_preview_frame"

@@ -913,6 +913,9 @@ export class LocalApiController {
       candidatePackages: Awaited<
         ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
       >["candidatePackages"];
+      auditEvents: Awaited<
+        ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
+      >["auditEvents"];
       approvals: Awaited<
         ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
       >["pendingApprovals"];
@@ -952,6 +955,7 @@ export class LocalApiController {
         profiles: workflowSnapshot?.workflowProfiles ?? [],
         schedules: workflowSnapshot?.schedules ?? [],
         candidatePackages: workflowSnapshot?.candidatePackages ?? [],
+        auditEvents: workflowSnapshot?.auditEvents ?? [],
         approvals: workflowSnapshot?.pendingApprovals ?? [],
         activeWorkflowJobId: workflowSnapshot?.activeWorkflowJobId ?? null
       }
@@ -1230,8 +1234,64 @@ export class LocalApiController {
           preview: previewResult
         };
       }
+      case "workflow.seekPreviewToCandidatePackage": {
+        const previewInput =
+          parsed as LocalApiCommandInputMap["workflow.seekPreviewToCandidatePackage"];
+        const workflowSnapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: previewInput.directory
+        });
+        const candidatePackage =
+          workflowSnapshot.candidatePackages.find(
+            (entry) => entry.id === previewInput.candidatePackageId
+          ) ?? null;
+
+        if (!candidatePackage) {
+          throw {
+            code: "WORKFLOW_CANDIDATE_PACKAGE_NOT_FOUND",
+            message: `Candidate package ${previewInput.candidatePackageId} could not be found.`
+          };
+        }
+
+        const anchor = previewInput.anchor ?? "midpoint";
+        const positionUs =
+          anchor === "start"
+            ? candidatePackage.startUs
+            : anchor === "end"
+              ? candidatePackage.endUs
+              : candidatePackage.startUs +
+                Math.round((candidatePackage.endUs - candidatePackage.startUs) / 2);
+        const previewState = await this.preview.getPreviewState();
+        let loadedTimeline = false;
+        let previewResult;
+
+        if (!previewState.loaded || previewState.timelineId !== candidatePackage.timelineId) {
+          const snapshot = await this.worker.getEditorSessionSnapshot({
+            directory: previewInput.directory
+          });
+
+          previewResult = await this.preview.loadProjectTimeline({
+            snapshot,
+            initialPlayheadUs: positionUs,
+            preservePlayhead: false
+          });
+          loadedTimeline = true;
+        } else {
+          previewResult = await this.preview.executeCommand({
+            type: "SeekPreview",
+            positionUs
+          });
+        }
+
+        return {
+          candidatePackageId: candidatePackage.id,
+          positionUs,
+          loadedTimeline,
+          preview: previewResult
+        };
+      }
       case "workflow.start":
       case "workflow.startBatch":
+      case "workflow.reviewCandidatePackage":
       case "workflow.exportCandidatePackage":
       case "workflow.cancelRun":
       case "workflow.resumeRun":
@@ -1263,6 +1323,8 @@ export class LocalApiController {
                 ? "StartWorkflow"
                 : name === "workflow.startBatch"
                   ? "StartBatchWorkflow"
+                  : name === "workflow.reviewCandidatePackage"
+                    ? "ReviewWorkflowCandidatePackage"
                   : name === "workflow.exportCandidatePackage"
                     ? "ExportCandidatePackage"
                   : name === "workflow.cancelRun"
@@ -1584,6 +1646,12 @@ export class LocalApiController {
           ) ?? null
         );
       }
+      case "workflow.auditEvents":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["workflow.auditEvents"]
+          )
+        ).auditEvents;
       case "workflowProfiles.list":
         return (
           await this.worker.getWorkflowSessionSnapshot(

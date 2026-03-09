@@ -367,6 +367,34 @@ When reached, the workflow engine:
 
 This is the core safety boundary that later allows OpenClaw to orchestrate workflow planning without silently mutating projects.
 
+## Workflow audit and candidate review
+
+Stage 12 adds a second workflow-safety layer on top of approvals:
+
+- persisted workflow audit events
+- explicit candidate-package review state
+- previewable candidate-package ranges
+
+Workflow audit events are operational records, not canonical editing state. They exist so local
+automation and OpenClaw can inspect:
+
+- when a run was created
+- how step status changed
+- which artifacts were produced
+- when approvals were created/resolved
+- when a candidate package was reviewed or exported
+
+Candidate-package review state is also operational:
+
+- `new`
+- `shortlisted`
+- `approved`
+- `rejected`
+- `exported`
+
+This keeps “analysis found a candidate”, “a reviewer accepted the candidate”, and “the candidate
+was actually exported” as separate, machine-readable facts.
+
 ## Brand kits
 
 Stage 11 extends brand kits into reusable local packaging packs.

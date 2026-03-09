@@ -594,6 +594,17 @@ const workflowCandidatePackageQuerySchema = z.object({
   directory: nonEmptyString,
   candidatePackageId: nonEmptyString
 });
+const workflowCandidatePackageReviewSchema = z.object({
+  directory: nonEmptyString,
+  candidatePackageId: nonEmptyString,
+  reviewStatus: z.enum(["new", "shortlisted", "approved", "rejected", "exported"]),
+  reviewNotes: z.string().nullable().optional()
+});
+const workflowCandidatePackagePreviewSchema = z.object({
+  directory: nonEmptyString,
+  candidatePackageId: nonEmptyString,
+  anchor: z.enum(["start", "midpoint", "end"]).optional()
+});
 const brandKitCreateSchema = z.object({
   directory: nonEmptyString,
   brandKit: brandKitPayloadSchema
@@ -1909,6 +1920,32 @@ const COMMAND_DEFINITIONS: CommandDefinition[] = [
   },
   {
     kind: "command",
+    name: "workflow.reviewCandidatePackage",
+    category: "workflow",
+    description: "Record explicit review state for a candidate package without exporting it.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        candidatePackageId: stringProperty("Candidate package id."),
+        reviewStatus: enumProperty(
+          ["new", "shortlisted", "approved", "rejected", "exported"],
+          "Review status to assign."
+        ),
+        reviewNotes: stringProperty("Optional reviewer notes.")
+      },
+      ["directory", "candidatePackageId", "reviewStatus"]
+    ),
+    outputDescription: "Returns the updated workflow candidate package review state.",
+    parser: workflowCandidatePackageReviewSchema
+  },
+  {
+    kind: "command",
     name: "workflow.exportCandidatePackage",
     category: "workflow",
     description: "Export one workflow candidate package as a bounded media output.",
@@ -1931,6 +1968,32 @@ const COMMAND_DEFINITIONS: CommandDefinition[] = [
     ),
     outputDescription: "Returns the updated workflow session snapshot and linked export run.",
     parser: workflowExportCandidateSchema
+  },
+  {
+    kind: "command",
+    name: "workflow.seekPreviewToCandidatePackage",
+    category: "workflow",
+    description: "Load or seek the preview session to a candidate-package range for review.",
+    requiredScopes: ["preview"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        candidatePackageId: stringProperty("Candidate package id."),
+        anchor: enumProperty(
+          ["start", "midpoint", "end"],
+          "Which point inside the candidate package range should be used for preview seek."
+        )
+      },
+      ["directory", "candidatePackageId"]
+    ),
+    outputDescription:
+      "Returns the resolved candidate package id, preview seek position, whether the timeline had to be loaded, and the resulting preview state.",
+    parser: workflowCandidatePackagePreviewSchema
   },
   {
     kind: "command",
@@ -2943,6 +3006,26 @@ const QUERY_DEFINITIONS: QueryDefinition[] = [
   },
   {
     kind: "query",
+    name: "workflow.auditEvents",
+    category: "workflow",
+    description: "List workflow audit events for the current project.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns workflow audit events ordered from newest to oldest.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
     name: "workflowProfiles.list",
     category: "workflow-profiles",
     description: "List reusable workflow profiles stored in local app data.",
@@ -3367,6 +3450,15 @@ const OPENCLAW_TOOL_RECORDS: OpenClawToolDefinitionRecord[] = [
   createToolRecordFromOperation("clawcut.inspect_workflow_artifact", "workflow.artifact", true, [
     "Read-only query."
   ]),
+  createToolRecordFromOperation("clawcut.list_candidate_packages", "workflow.candidatePackages", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.inspect_candidate_package", "workflow.candidatePackage", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.list_workflow_audit_events", "workflow.auditEvents", true, [
+    "Read-only query."
+  ]),
   createToolRecord({
     name: "clawcut.generate_social_candidates",
     category: "workflow",
@@ -3397,6 +3489,12 @@ const OPENCLAW_TOOL_RECORDS: OpenClawToolDefinitionRecord[] = [
     ),
     outputDescription: "Returns the started workflow run."
   }),
+  createToolRecordFromOperation("clawcut.seek_preview_to_candidate_package", "workflow.seekPreviewToCandidatePackage", false, [
+    "Loads the correct timeline if needed, then seeks the live desktop preview session to the candidate-package range."
+  ]),
+  createToolRecordFromOperation("clawcut.review_candidate_package", "workflow.reviewCandidatePackage", false, [
+    "Records review state for a candidate package without exporting it."
+  ]),
   createToolRecordFromOperation("clawcut.export_candidate_package", "workflow.exportCandidatePackage", false, [
     "High-impact operation. Exports a previously generated candidate package through the existing export pipeline."
   ]),

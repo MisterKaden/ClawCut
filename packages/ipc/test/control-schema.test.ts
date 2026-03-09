@@ -65,6 +65,9 @@ describe("control schema", () => {
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_workflow");
     expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflow_profiles");
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.run_workflow_profile");
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_candidate_packages");
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflow_audit_events");
+    expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.review_candidate_package");
   });
 
   test("maps OpenClaw preview frame capture requests to the lighter frame reference by default", () => {
@@ -160,6 +163,18 @@ describe("control schema", () => {
     ).toBe(false);
     expect(
       OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.run_workflow_profile")
+        ?.availableByDefault
+    ).toBe(false);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.list_candidate_packages")
+        ?.availableByDefault
+    ).toBe(true);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.list_workflow_audit_events")
+        ?.availableByDefault
+    ).toBe(true);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.review_candidate_package")
         ?.availableByDefault
     ).toBe(false);
   });

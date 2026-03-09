@@ -202,10 +202,43 @@ Current Stage 11 notes:
 
 ## Stage 12: Beast mode
 
-Planned acceptance criteria:
+Status: complete
 
-- stronger packaged-runtime independence
-- deeper audit/history and automation observability
-- broader scale/performance work for workflow-heavy local automation
-- richer review tooling for candidate packages and branded outputs
-- safer cross-project orchestration foundations where justified
+Acceptance criteria:
+
+- deeper audit/history and automation observability exist for workflow-heavy local automation
+- candidate packages are reviewable before export and their review state is machine-readable
+- workflow audit/history is queryable and exposed through the OpenClaw-facing control surface
+- preview inspection can jump directly to candidate-package ranges for review
+- docs, tests, and smoke cover the shipped review/audit workflow
+
+Delivered:
+
+- persisted `WorkflowAuditEvent` records in operational storage
+- workflow-session snapshots now include audit events ordered newest first
+- candidate packages now carry explicit review state:
+  - `new`
+  - `shortlisted`
+  - `approved`
+  - `rejected`
+  - `exported`
+- explicit `ReviewWorkflowCandidatePackage` command path
+- local control and OpenClaw surface additions:
+  - `workflow.auditEvents`
+  - `workflow.seekPreviewToCandidatePackage`
+  - `workflow.reviewCandidatePackage`
+  - `clawcut.list_candidate_packages`
+  - `clawcut.inspect_candidate_package`
+  - `clawcut.list_workflow_audit_events`
+  - `clawcut.seek_preview_to_candidate_package`
+  - `clawcut.review_candidate_package`
+- desktop workflow UI for:
+  - candidate review notes/status
+  - previewing candidate-package ranges
+  - recent workflow audit history
+
+Current Stage 12 notes:
+
+- workflow audit is optimized for local automation observability, not remote ops aggregation
+- candidate review is project-local operational state, not canonical timeline content
+- preview seeking for candidate review still relies on the live desktop preview backend

@@ -4,9 +4,11 @@ import type {
   BrandKit,
   CaptionTemplateId,
   ExportPresetId,
+  WorkflowAuditEvent,
   WorkflowArtifact,
   WorkflowBatchItemRun,
   WorkflowCandidatePackage,
+  WorkflowCandidateReviewStatus,
   WorkflowProfile,
   WorkflowRun,
   WorkflowSchedule,
@@ -47,6 +49,12 @@ interface WorkflowPanelProps {
   onPauseWorkflowSchedule: (scheduleId: string) => void;
   onResumeWorkflowSchedule: (scheduleId: string) => void;
   onDeleteWorkflowSchedule: (scheduleId: string) => void;
+  onPreviewCandidatePackage: (candidatePackageId: string) => void;
+  onReviewCandidatePackage: (
+    candidatePackageId: string,
+    reviewStatus: WorkflowCandidateReviewStatus,
+    reviewNotes: string | null
+  ) => void;
   onExportCandidatePackage: (candidatePackageId: string) => void;
 }
 
@@ -138,6 +146,43 @@ function workflowToneClass(status: WorkflowRun["status"]): string {
     case "running":
       return "tone-chip tone-chip--progress";
   }
+}
+
+function humanizeCandidateReviewStatus(status: WorkflowCandidateReviewStatus): string {
+  switch (status) {
+    case "new":
+      return "New";
+    case "shortlisted":
+      return "Shortlisted";
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "exported":
+      return "Exported";
+  }
+}
+
+function candidateReviewToneClass(status: WorkflowCandidateReviewStatus): string {
+  switch (status) {
+    case "approved":
+    case "exported":
+      return "tone-chip tone-chip--ok";
+    case "rejected":
+      return "tone-chip tone-chip--danger";
+    case "shortlisted":
+      return "tone-chip tone-chip--warning";
+    case "new":
+      return "tone-chip tone-chip--progress";
+  }
+}
+
+function formatTimestamp(timestamp: string | null): string {
+  if (!timestamp) {
+    return "Unknown";
+  }
+
+  return new Date(timestamp).toLocaleString();
 }
 
 function slugify(value: string): string {
@@ -411,6 +456,8 @@ export function WorkflowPanel({
   onPauseWorkflowSchedule,
   onResumeWorkflowSchedule,
   onDeleteWorkflowSchedule,
+  onPreviewCandidatePackage,
+  onReviewCandidatePackage,
   onExportCandidatePackage
 }: WorkflowPanelProps) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<WorkflowTemplate["id"] | null>(null);
@@ -439,7 +486,14 @@ export function WorkflowPanel({
     workflowSnapshot?.schedules.find((schedule) => schedule.id === selectedScheduleId) ??
     workflowSnapshot?.schedules[0] ??
     null;
-  const candidatePackages = workflowSnapshot?.candidatePackages ?? [];
+  const candidatePackages = useMemo(
+    () => workflowSnapshot?.candidatePackages ?? [],
+    [workflowSnapshot]
+  );
+  const recentAuditEvents = useMemo(
+    () => workflowSnapshot?.auditEvents.slice(0, 8) ?? [],
+    [workflowSnapshot]
+  );
   const [brandKitDraft, setBrandKitDraft] = useState<BrandKitDraft>(() =>
     createBrandKitDraft(null, "bottom-center-clean", "video-master-1080p")
   );
@@ -449,6 +503,7 @@ export function WorkflowPanel({
   const [scheduleDraft, setScheduleDraft] = useState<WorkflowScheduleDraft>(() =>
     createWorkflowScheduleDraft(null, "", null)
   );
+  const [candidateReviewDrafts, setCandidateReviewDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!selectedWorkflowId && workflows[0]) {
@@ -511,6 +566,22 @@ export function WorkflowPanel({
       createWorkflowScheduleDraft(selectedSchedule, selectedProfile?.id ?? "", selectedClipId)
     );
   }, [selectedClipId, selectedProfile, selectedSchedule]);
+
+  useEffect(() => {
+    setCandidateReviewDrafts((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const candidatePackage of candidatePackages) {
+        if (next[candidatePackage.id] === undefined) {
+          next[candidatePackage.id] = candidatePackage.reviewNotes ?? "";
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [candidatePackages]);
 
   const clipOptions = useMemo(
     () =>
@@ -1480,20 +1551,123 @@ export function WorkflowPanel({
                         {candidate.label} · {(candidate.startUs / 1_000_000).toFixed(2)}s to{" "}
                         {(candidate.endUs / 1_000_000).toFixed(2)}s
                       </span>
+                      <span className={candidateReviewToneClass(candidate.reviewStatus)}>
+                        {humanizeCandidateReviewStatus(candidate.reviewStatus)}
+                      </span>
+                      <span>
+                        Reviewed {formatTimestamp(candidate.reviewedAt)} · transcript{" "}
+                        {candidate.transcriptId ?? "none"}
+                      </span>
+                      {candidate.reviewNotes ? <span>{candidate.reviewNotes}</span> : null}
                     </div>
-                    <button
-                      className="secondary-button secondary-button--small"
-                      onClick={() => onExportCandidatePackage(candidate.id)}
-                      type="button"
-                    >
-                      Export candidate
-                    </button>
+                    <label className="field field--compact workflow-candidate-notes">
+                      <span>Review notes</span>
+                      <input
+                        onChange={(event) =>
+                          setCandidateReviewDrafts((current) => ({
+                            ...current,
+                            [candidate.id]: event.target.value
+                          }))
+                        }
+                        placeholder="Optional review notes"
+                        type="text"
+                        value={candidateReviewDrafts[candidate.id] ?? ""}
+                      />
+                    </label>
+                    <div className="button-row button-row--tight">
+                      <button
+                        className="secondary-button secondary-button--small"
+                        onClick={() => onPreviewCandidatePackage(candidate.id)}
+                        type="button"
+                      >
+                        Preview
+                      </button>
+                      <button
+                        className="secondary-button secondary-button--small"
+                        onClick={() =>
+                          onReviewCandidatePackage(
+                            candidate.id,
+                            "shortlisted",
+                            candidateReviewDrafts[candidate.id] || null
+                          )
+                        }
+                        type="button"
+                      >
+                        Shortlist
+                      </button>
+                      <button
+                        className="primary-button primary-button--small"
+                        onClick={() =>
+                          onReviewCandidatePackage(
+                            candidate.id,
+                            "approved",
+                            candidateReviewDrafts[candidate.id] || null
+                          )
+                        }
+                        type="button"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="secondary-button secondary-button--small"
+                        onClick={() =>
+                          onReviewCandidatePackage(
+                            candidate.id,
+                            "rejected",
+                            candidateReviewDrafts[candidate.id] || null
+                          )
+                        }
+                        type="button"
+                      >
+                        Reject
+                      </button>
+                      <button
+                        className="secondary-button secondary-button--small"
+                        onClick={() => onExportCandidatePackage(candidate.id)}
+                        type="button"
+                      >
+                        Export
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="empty-inline">
                 Social candidate workflows will list reviewable packages here before export.
+              </div>
+            )}
+          </section>
+
+          <section className="workflow-surface">
+            <div className="workflow-surface__header">
+              <div>
+                <span className="meta-label">Workflow audit</span>
+                <strong>{recentAuditEvents.length} recent events</strong>
+              </div>
+            </div>
+
+            {recentAuditEvents.length ? (
+              <div className="workflow-artifact-list">
+                {recentAuditEvents.map((event: WorkflowAuditEvent) => (
+                  <div className="workflow-artifact-row" key={event.id}>
+                    <div>
+                      <strong>{event.message}</strong>
+                      <span>
+                        {event.kind} · {event.severity} · {formatTimestamp(event.createdAt)}
+                      </span>
+                      {event.candidatePackageId ? (
+                        <span>Candidate package {event.candidatePackageId}</span>
+                      ) : null}
+                      {event.stepRunId ? <span>Step {event.stepRunId}</span> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-inline">
+                Workflow runs now emit machine-readable audit events for review, approvals, and
+                artifacts.
               </div>
             )}
           </section>

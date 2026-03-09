@@ -1030,6 +1030,51 @@ export function App() {
     });
   }
 
+  async function handlePreviewCandidatePackage(candidatePackageId: string): Promise<void> {
+    if (!workflowSnapshot) {
+      return;
+    }
+
+    const candidatePackage = workflowSnapshot.candidatePackages.find(
+      (entry) => entry.id === candidatePackageId
+    );
+
+    if (!candidatePackage) {
+      setImportFeedback("Candidate package is no longer available for preview.");
+      return;
+    }
+
+    await previewController.executeCommand({
+      type: "SeekPreview",
+      positionUs:
+        candidatePackage.startUs +
+        Math.round((candidatePackage.endUs - candidatePackage.startUs) / 2)
+    });
+    setImportFeedback(`Loaded candidate package ${candidatePackage.title} into preview.`);
+  }
+
+  async function handleReviewCandidatePackage(
+    candidatePackageId: string,
+    reviewStatus: "new" | "shortlisted" | "approved" | "rejected" | "exported",
+    reviewNotes: string | null
+  ): Promise<void> {
+    const result = await handleExecuteWorkflowCommand(
+      {
+        type: "ReviewWorkflowCandidatePackage",
+        candidatePackageId,
+        reviewStatus,
+        reviewNotes
+      },
+      "Updating candidate review state…"
+    );
+
+    if (result?.result.ok && result.result.commandType === "ReviewWorkflowCandidatePackage") {
+      setImportFeedback(
+        `Candidate ${result.result.candidatePackage.title} marked ${result.result.candidatePackage.reviewStatus}.`
+      );
+    }
+  }
+
   async function handleStartExport(): Promise<void> {
     if (!snapshot || !selectedExportPresetId) {
       return;
@@ -1212,12 +1257,12 @@ export function App() {
         <div className="hero__backdrop" />
         <div className="hero__masthead">
           <div>
-            <p className="eyebrow">Clawcut / Stage 11 workflow packaging and social automation</p>
-            <h1>Package reusable workflow profiles, schedule local runs, and turn brand-aware candidates into reviewable outputs.</h1>
+            <p className="eyebrow">Clawcut / Stage 12 audit trails and candidate review</p>
+            <h1>Review candidate packages in context, preserve workflow audit history, and expose safer automation traces to OpenClaw.</h1>
             <p className="lede">
-              Stage 11 builds on the command engine, workflow runtime, and smart suggestions with
-              reusable profiles, local scheduling hooks, brand asset realization, and review-first
-              social candidate packaging for OpenClaw-native automation.
+              Stage 12 hardens workflow automation with explicit candidate review state, previewable
+              suggestion packaging, and machine-readable audit history that stays visible in both
+              the desktop app and the OpenClaw control surface.
             </p>
           </div>
 
@@ -2107,6 +2152,12 @@ export function App() {
             },
             "Deleting workflow schedule…"
           )
+        }
+        onPreviewCandidatePackage={(candidatePackageId) =>
+          void handlePreviewCandidatePackage(candidatePackageId)
+        }
+        onReviewCandidatePackage={(candidatePackageId, reviewStatus, reviewNotes) =>
+          void handleReviewCandidatePackage(candidatePackageId, reviewStatus, reviewNotes)
         }
         onExportCandidatePackage={(candidatePackageId) =>
           void handleExecuteWorkflowCommand(

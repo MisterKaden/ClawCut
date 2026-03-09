@@ -169,6 +169,7 @@ Cross-project batch orchestration is intentionally deferred.
 ## Candidate packages
 
 Stage 11 adds reviewable candidate-package artifacts for short-form and transcript-range workflows.
+Stage 12 hardens them with explicit review state and audit events.
 
 Candidate packages are typed records with:
 
@@ -180,6 +181,51 @@ Candidate packages are typed records with:
 - snapshot artifact references
 
 They are created first, reviewed second, and only exported when explicitly requested.
+
+Candidate-package review states:
+
+- `new`
+- `shortlisted`
+- `approved`
+- `rejected`
+- `exported`
+
+Review state is operational and machine-readable. It exists so humans and OpenClaw can distinguish:
+
+- discovered candidates
+- reviewed candidates
+- approved candidates
+- exported candidates
+
+without conflating those with timeline mutation.
+
+## Workflow audit trail
+
+Stage 12 adds persisted `WorkflowAuditEvent` records for workflow automation observability.
+
+Each event records:
+
+- workflow run id
+- optional step or batch-item linkage
+- optional candidate-package linkage
+- event kind
+- severity
+- message
+- structured details
+- creation timestamp
+
+Current event kinds:
+
+- `run-created`
+- `run-status`
+- `step-status`
+- `approval`
+- `artifact`
+- `candidate-review`
+- `schedule`
+
+This gives the desktop UI, local transport, and OpenClaw one shared history surface for workflow
+state transitions and review activity.
 
 ## Artifacts
 
@@ -319,8 +365,17 @@ Stage 11 extends that with:
 - `clawcut.generate_social_candidates`
 - `clawcut.export_candidate_package`
 
+Stage 12 extends that with:
+
+- `clawcut.list_candidate_packages`
+- `clawcut.inspect_candidate_package`
+- `clawcut.list_workflow_audit_events`
+- `clawcut.seek_preview_to_candidate_package`
+- `clawcut.review_candidate_package`
+
 Read-only discovery tools stay enabled by default.
-Mutating profile, schedule, and candidate-export tools remain allowlist-friendly by default.
+Mutating profile, schedule, candidate-review, preview-seek, and candidate-export tools remain
+allowlist-friendly by default.
 
 Read-only workflow inspection tools remain default-safe. Start/approve/retry/resume tools are allowlist-friendly by default.
 

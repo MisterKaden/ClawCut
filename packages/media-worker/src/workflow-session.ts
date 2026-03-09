@@ -16,9 +16,11 @@ import {
   type JobError,
   type SmartCommandFailure,
   type WorkflowApproval,
+  type WorkflowAuditEvent,
   type WorkflowArtifact,
   type WorkflowBatchItemRun,
   type WorkflowCandidatePackage,
+  type WorkflowCandidateReviewStatus,
   type WorkflowCommand,
   type WorkflowCommandFailure,
   type WorkflowProfile,
@@ -65,10 +67,12 @@ import {
 } from "./workflow-profile-store";
 import {
   createWorkflowRunRecord,
+  listWorkflowAuditEvents,
   getWorkflowRun,
   listPendingWorkflowApprovals,
   listWorkflowRuns,
   updateWorkflowRunRecord,
+  upsertWorkflowAuditEventRecord,
   upsertWorkflowApprovalRecord,
   upsertWorkflowArtifactRecord,
   upsertWorkflowBatchItemRecord,
@@ -148,6 +152,7 @@ async function buildWorkflowSession(
 ): Promise<WorkflowSessionSnapshot> {
   const paths = resolveProjectPaths(directory);
   const workflowRuns = listWorkflowRuns(paths.databasePath);
+  const auditEvents = listWorkflowAuditEvents(paths.databasePath);
   const [brandKits, workflowProfiles, schedules] = await Promise.all([
     listBrandKits(),
     listWorkflowProfiles(),
@@ -163,6 +168,7 @@ async function buildWorkflowSession(
     schedules,
     workflowRuns,
     candidatePackages: [],
+    auditEvents,
     pendingApprovals: listPendingWorkflowApprovals(paths.databasePath),
     activeWorkflowJobId:
       workflowRuns.find((run) =>
@@ -470,7 +476,62 @@ async function createWorkflowArtifact(
   };
 
   upsertWorkflowArtifactRecord(input.databasePath, artifact);
+  recordWorkflowAuditEvent(input.databasePath, {
+    workflowRunId: artifact.workflowRunId,
+    stepRunId: artifact.stepRunId,
+    batchItemRunId: artifact.batchItemRunId,
+    candidatePackageId:
+      artifact.kind === "candidate-package" &&
+      typeof artifact.metadata.id === "string"
+        ? artifact.metadata.id
+        : artifact.kind === "candidate-export" &&
+            typeof artifact.metadata.candidatePackageId === "string"
+          ? artifact.metadata.candidatePackageId
+          : null,
+    kind: "artifact",
+    severity: "info",
+    message: `Created workflow artifact: ${artifact.kind}`,
+    details: {
+      artifactId: artifact.id,
+      kind: artifact.kind,
+      label: artifact.label,
+      path: artifact.path
+    }
+  });
   return artifact;
+}
+
+function createWorkflowAuditEvent(input: {
+  workflowRunId: string | null;
+  stepRunId?: string | null;
+  batchItemRunId?: string | null;
+  candidatePackageId?: string | null;
+  kind: WorkflowAuditEvent["kind"];
+  severity?: WorkflowAuditEvent["severity"];
+  message: string;
+  details?: Record<string, unknown>;
+}): WorkflowAuditEvent {
+  return {
+    id: randomUUID(),
+    workflowRunId: input.workflowRunId,
+    stepRunId: input.stepRunId ?? null,
+    batchItemRunId: input.batchItemRunId ?? null,
+    candidatePackageId: input.candidatePackageId ?? null,
+    kind: input.kind,
+    severity: input.severity ?? "info",
+    message: input.message,
+    details: input.details ?? {},
+    createdAt: nowIso()
+  };
+}
+
+function recordWorkflowAuditEvent(
+  databasePath: string,
+  input: Parameters<typeof createWorkflowAuditEvent>[0]
+): WorkflowAuditEvent {
+  const event = createWorkflowAuditEvent(input);
+  upsertWorkflowAuditEventRecord(databasePath, event);
+  return event;
 }
 
 function createCandidatePackage(input: {
@@ -487,6 +548,9 @@ function createCandidatePackage(input: {
   regionId?: string | null;
   exportRunId?: string | null;
   snapshotArtifactIds?: string[];
+  reviewStatus?: WorkflowCandidateReviewStatus;
+  reviewNotes?: string | null;
+  reviewedAt?: string | null;
 }): WorkflowCandidatePackage {
   return {
     id: randomUUID(),
@@ -503,6 +567,9 @@ function createCandidatePackage(input: {
     regionId: input.regionId ?? null,
     exportRunId: input.exportRunId ?? null,
     snapshotArtifactIds: input.snapshotArtifactIds ?? [],
+    reviewStatus: input.reviewStatus ?? "new",
+    reviewNotes: input.reviewNotes ?? null,
+    reviewedAt: input.reviewedAt ?? null,
     createdAt: nowIso()
   };
 }
@@ -568,8 +635,59 @@ function artifactToCandidatePackage(
     snapshotArtifactIds: Array.isArray(metadata.snapshotArtifactIds)
       ? metadata.snapshotArtifactIds.filter((entry): entry is string => typeof entry === "string")
       : [],
+    reviewStatus:
+      metadata.reviewStatus === "shortlisted" ||
+      metadata.reviewStatus === "approved" ||
+      metadata.reviewStatus === "rejected" ||
+      metadata.reviewStatus === "exported"
+        ? metadata.reviewStatus
+        : "new",
+    reviewNotes: typeof metadata.reviewNotes === "string" ? metadata.reviewNotes : null,
+    reviewedAt: typeof metadata.reviewedAt === "string" ? metadata.reviewedAt : null,
     createdAt: typeof metadata.createdAt === "string" ? metadata.createdAt : artifact.createdAt
   };
+}
+
+function findCandidatePackageArtifact(
+  run: WorkflowRun,
+  candidatePackageId: string
+): WorkflowArtifact | null {
+  return (
+    run.artifacts.find((artifact) => {
+      if (artifact.kind !== "candidate-package") {
+        return false;
+      }
+
+      return artifactToCandidatePackage(artifact, run.id)?.id === candidatePackageId;
+    }) ?? null
+  );
+}
+
+function getCandidatePackageRecord(
+  databasePath: string,
+  candidatePackageId: string
+): { run: WorkflowRun; artifact: WorkflowArtifact; candidatePackage: WorkflowCandidatePackage } | null {
+  for (const run of listWorkflowRuns(databasePath)) {
+    const artifact = findCandidatePackageArtifact(run, candidatePackageId);
+
+    if (!artifact) {
+      continue;
+    }
+
+    const candidatePackage = artifactToCandidatePackage(artifact, run.id);
+
+    if (!candidatePackage) {
+      continue;
+    }
+
+    return {
+      run,
+      artifact,
+      candidatePackage
+    };
+  }
+
+  return null;
 }
 
 function createApproval(
@@ -1594,6 +1712,15 @@ async function executeSingleWorkflowRun(directory: string, runId: string): Promi
     completedAt: null,
     error: null
   });
+  recordWorkflowAuditEvent(paths.databasePath, {
+    workflowRunId: run.id,
+    kind: "run-status",
+    severity: "info",
+    message: "Workflow run started.",
+    details: {
+      status: "running"
+    }
+  });
   updateJobRecord(paths.databasePath, run.parentJobId, {
     status: "running",
     step: "Running workflow",
@@ -1644,6 +1771,19 @@ async function executeSingleWorkflowRun(directory: string, runId: string): Promi
         });
         run = appendApproval(run, approval);
         upsertWorkflowApprovalRecord(paths.databasePath, approval);
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          stepRunId: stepRun.id,
+          batchItemRunId: null,
+          kind: "approval",
+          severity: "warning",
+          message: `Approval requested for ${definition.name}.`,
+          details: {
+            approvalId: approval.id,
+            reason: approval.reason,
+            proposedEffects: approval.proposedEffects
+          }
+        });
       }
 
       const approval = run.approvals.find((entry) => entry.stepRunId === stepRun.id);
@@ -1658,6 +1798,17 @@ async function executeSingleWorkflowRun(directory: string, runId: string): Promi
         upsertWorkflowStepRunRecord(paths.databasePath, waitingStep);
         updateWorkflowRunRecord(paths.databasePath, run.id, {
           status: "waiting-approval"
+        });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          stepRunId: waitingStep.id,
+          kind: "run-status",
+          severity: "warning",
+          message: `Workflow run is waiting for approval on ${definition.name}.`,
+          details: {
+            status: "waiting-approval",
+            stepId: definition.id
+          }
         });
         updateJobRecord(paths.databasePath, run.parentJobId, {
           status: "running",
@@ -1677,6 +1828,18 @@ async function executeSingleWorkflowRun(directory: string, runId: string): Promi
     };
     run = replaceStepRun(run, runningStep);
     upsertWorkflowStepRunRecord(paths.databasePath, runningStep);
+    recordWorkflowAuditEvent(paths.databasePath, {
+      workflowRunId: run.id,
+      stepRunId: runningStep.id,
+      kind: "step-status",
+      severity: "info",
+      message: `Started workflow step: ${definition.name}.`,
+      details: {
+        status: "running",
+        stepId: definition.id,
+        kind: definition.kind
+      }
+    });
 
     try {
       const execution = await executeWorkflowStep({
@@ -1697,6 +1860,18 @@ async function executeSingleWorkflowRun(directory: string, runId: string): Promi
       };
       run = replaceStepRun(run, completedStep);
       upsertWorkflowStepRunRecord(paths.databasePath, completedStep);
+      recordWorkflowAuditEvent(paths.databasePath, {
+        workflowRunId: run.id,
+        stepRunId: completedStep.id,
+        kind: "step-status",
+        severity: "info",
+        message: `Completed workflow step: ${definition.name}.`,
+        details: {
+          status: "completed",
+          stepId: definition.id,
+          outputSummary: completedStep.outputSummary
+        }
+      });
     } catch (error) {
       const failedStep = {
         ...runningStep,
@@ -1712,6 +1887,30 @@ async function executeSingleWorkflowRun(directory: string, runId: string): Promi
         error: failedStep.error,
         completedAt: nowIso()
       });
+      recordWorkflowAuditEvent(paths.databasePath, {
+        workflowRunId: run.id,
+        stepRunId: failedStep.id,
+        kind: "step-status",
+        severity: "error",
+        message: `Workflow step failed: ${definition.name}.`,
+        details: {
+          status: "failed",
+          stepId: definition.id,
+          error: failedStep.error
+        }
+      });
+      recordWorkflowAuditEvent(paths.databasePath, {
+        workflowRunId: run.id,
+        stepRunId: failedStep.id,
+        kind: "run-status",
+        severity: "error",
+        message: "Workflow run failed.",
+        details: {
+          status: "failed",
+          stepId: definition.id,
+          error: failedStep.error
+        }
+      });
       updateJobRecord(paths.databasePath, run.parentJobId, {
         status: "failed",
         progress: 1,
@@ -1725,6 +1924,15 @@ async function executeSingleWorkflowRun(directory: string, runId: string): Promi
   updateWorkflowRunRecord(paths.databasePath, run.id, {
     status: "completed",
     completedAt: nowIso()
+  });
+  recordWorkflowAuditEvent(paths.databasePath, {
+    workflowRunId: run.id,
+    kind: "run-status",
+    severity: "info",
+    message: "Workflow run completed.",
+    details: {
+      status: "completed"
+    }
   });
   updateJobRecord(paths.databasePath, run.parentJobId, {
     status: "completed",
@@ -1752,6 +1960,15 @@ async function executeBatchWorkflowRun(directory: string, runId: string): Promis
     startedAt: run.startedAt ?? nowIso(),
     completedAt: null,
     error: null
+  });
+  recordWorkflowAuditEvent(paths.databasePath, {
+    workflowRunId: run.id,
+    kind: "run-status",
+    severity: "info",
+    message: "Batch workflow run started.",
+    details: {
+      status: "running"
+    }
   });
   updateJobRecord(paths.databasePath, run.parentJobId, {
     status: "running",
@@ -1816,6 +2033,19 @@ async function executeBatchWorkflowRun(directory: string, runId: string): Promis
         error: null
       };
       upsertWorkflowStepRunRecord(paths.databasePath, runningStep);
+      recordWorkflowAuditEvent(paths.databasePath, {
+        workflowRunId: run.id,
+        stepRunId: runningStep.id,
+        batchItemRunId: currentBatchItem.id,
+        kind: "step-status",
+        severity: "info",
+        message: `Started batch step: ${definition.name}.`,
+        details: {
+          status: "running",
+          stepId: definition.id,
+          clipId: currentBatchItem.targetClipId
+        }
+      });
 
       try {
         const execution = await executeWorkflowStep({
@@ -1834,6 +2064,19 @@ async function executeBatchWorkflowRun(directory: string, runId: string): Promis
           updatedAt: nowIso(),
           completedAt: nowIso()
         });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          stepRunId: runningStep.id,
+          batchItemRunId: currentBatchItem.id,
+          kind: "step-status",
+          severity: "info",
+          message: `Completed batch step: ${definition.name}.`,
+          details: {
+            status: "completed",
+            stepId: definition.id,
+            clipId: currentBatchItem.targetClipId
+          }
+        });
         currentRun = getWorkflowRun(paths.databasePath, run.id) ?? currentRun;
       } catch (error) {
         const jobError = toJobError(
@@ -1846,6 +2089,20 @@ async function executeBatchWorkflowRun(directory: string, runId: string): Promis
           error: jobError,
           updatedAt: nowIso(),
           completedAt: nowIso()
+        });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          stepRunId: runningStep.id,
+          batchItemRunId: currentBatchItem.id,
+          kind: "step-status",
+          severity: "error",
+          message: `Batch step failed: ${definition.name}.`,
+          details: {
+            status: "failed",
+            stepId: definition.id,
+            clipId: currentBatchItem.targetClipId,
+            error: jobError
+          }
         });
         currentBatchItem = {
           ...currentBatchItem,
@@ -1877,6 +2134,20 @@ async function executeBatchWorkflowRun(directory: string, runId: string): Promis
     warnings:
       failedItemCount > 0 ? [`${failedItemCount} batch item(s) failed.`] : [],
     completedAt: nowIso()
+  });
+  recordWorkflowAuditEvent(paths.databasePath, {
+    workflowRunId: run.id,
+    kind: "run-status",
+    severity: failedItemCount > 0 ? "warning" : "info",
+    message:
+      failedItemCount > 0
+        ? "Batch workflow completed with partial failures."
+        : "Batch workflow completed.",
+    details: {
+      status: failedItemCount < mutableRun.batchItems.length ? "completed" : "failed",
+      failedItemCount,
+      totalBatchItemCount: mutableRun.batchItems.length
+    }
   });
   updateJobRecord(paths.databasePath, run.parentJobId, {
     status: failedItemCount < mutableRun.batchItems.length ? "completed" : "failed",
@@ -1920,6 +2191,16 @@ async function processQueuedWorkflow(directory: string): Promise<void> {
       status: "failed",
       error: toJobError(error instanceof Error ? error : new Error("Workflow failed."), "WORKFLOW_FAILED"),
       completedAt: nowIso()
+    });
+    recordWorkflowAuditEvent(paths.databasePath, {
+      workflowRunId: nextRun.id,
+      kind: "run-status",
+      severity: "error",
+      message: "Workflow processing failed before completion.",
+      details: {
+        status: "failed",
+        error: toJobError(error instanceof Error ? error : new Error("Workflow failed."), "WORKFLOW_FAILED")
+      }
     });
     updateJobRecord(paths.databasePath, nextRun.parentJobId, {
       status: "failed",
@@ -2006,6 +2287,18 @@ async function createAndQueueWorkflowRun(
 
   createWorkflowRunRecord(paths.databasePath, run);
   persistWorkflowRunStructure(paths.databasePath, run);
+  recordWorkflowAuditEvent(paths.databasePath, {
+    workflowRunId: run.id,
+    kind: "run-created",
+    severity: "info",
+    message: `Queued workflow run for ${template.name}.`,
+    details: {
+      templateId: template.id,
+      profileId: run.profileId,
+      scheduleId: run.scheduleId,
+      inputKeys: Object.keys(run.input)
+    }
+  });
   updateJobRecord(paths.databasePath, jobId, {
     payload: {
       workflowRunId: run.id,
@@ -2143,6 +2436,15 @@ export async function executeWorkflowCommand(
           step: "Cancelled",
           errorMessage: null
         });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          kind: "run-status",
+          severity: "warning",
+          message: "Workflow run cancelled.",
+          details: {
+            status: "cancelled"
+          }
+        });
 
         return {
           snapshot: await buildWorkflowSession(paths.directory, document.project.name),
@@ -2173,6 +2475,15 @@ export async function executeWorkflowCommand(
           progress: 0,
           step: "Queued",
           errorMessage: null
+        });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          kind: "run-status",
+          severity: "info",
+          message: "Workflow run resumed and queued.",
+          details: {
+            status: "queued"
+          }
         });
         scheduleWorkflowRun(paths.directory);
 
@@ -2217,6 +2528,17 @@ export async function executeWorkflowCommand(
           step: "Queued",
           errorMessage: null
         });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          stepRunId: stepRun.id,
+          kind: "step-status",
+          severity: "info",
+          message: "Workflow step reset for retry.",
+          details: {
+            status: "pending",
+            previousStatus: stepRun.status
+          }
+        });
         scheduleWorkflowRun(paths.directory);
 
         return {
@@ -2244,6 +2566,18 @@ export async function executeWorkflowCommand(
           status: "approved",
           updatedAt: nowIso(),
           resolvedAt: nowIso()
+        });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          stepRunId: approval.stepRunId,
+          batchItemRunId: approval.batchItemRunId,
+          kind: "approval",
+          severity: "info",
+          message: "Workflow approval granted.",
+          details: {
+            approvalId: approval.id,
+            status: "approved"
+          }
         });
         const nextRun = updateWorkflowRunRecord(paths.databasePath, run.id, {
           status: "queued",
@@ -2277,6 +2611,18 @@ export async function executeWorkflowCommand(
           status: "rejected",
           updatedAt: nowIso(),
           resolvedAt: nowIso()
+        });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: run.id,
+          stepRunId: approval.stepRunId,
+          batchItemRunId: approval.batchItemRunId,
+          kind: "approval",
+          severity: "warning",
+          message: "Workflow approval rejected.",
+          details: {
+            approvalId: approval.id,
+            status: "rejected"
+          }
         });
         const nextRun = updateWorkflowRunRecord(paths.databasePath, run.id, {
           status: "failed",
@@ -2471,6 +2817,68 @@ export async function executeWorkflowCommand(
           }
         };
       }
+      case "ReviewWorkflowCandidatePackage": {
+        const candidateRecord = getCandidatePackageRecord(
+          paths.databasePath,
+          command.candidatePackageId
+        );
+
+        if (!candidateRecord) {
+          return {
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+            result: createFailure(
+              command,
+              "WORKFLOW_CANDIDATE_PACKAGE_NOT_FOUND",
+              `Candidate package ${command.candidatePackageId} could not be found.`
+            )
+          };
+        }
+
+        const reviewedCandidatePackage: WorkflowCandidatePackage = {
+          ...candidateRecord.candidatePackage,
+          reviewStatus: command.reviewStatus,
+          reviewNotes:
+            command.reviewNotes === undefined
+              ? candidateRecord.candidatePackage.reviewNotes
+              : command.reviewNotes,
+          reviewedAt: nowIso()
+        };
+
+        upsertWorkflowArtifactRecord(paths.databasePath, {
+          ...candidateRecord.artifact,
+          metadata: {
+            ...candidateRecord.artifact.metadata,
+            ...reviewedCandidatePackage
+          }
+        });
+        recordWorkflowAuditEvent(paths.databasePath, {
+          workflowRunId: candidateRecord.run.id,
+          stepRunId: candidateRecord.artifact.stepRunId,
+          batchItemRunId: candidateRecord.artifact.batchItemRunId,
+          candidatePackageId: reviewedCandidatePackage.id,
+          kind: "candidate-review",
+          severity:
+            command.reviewStatus === "rejected"
+              ? "warning"
+              : command.reviewStatus === "approved" || command.reviewStatus === "exported"
+                ? "info"
+                : "info",
+          message: `Candidate package marked ${command.reviewStatus}.`,
+          details: {
+            reviewStatus: command.reviewStatus,
+            reviewNotes: reviewedCandidatePackage.reviewNotes
+          }
+        });
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "ReviewWorkflowCandidatePackage",
+            candidatePackage: reviewedCandidatePackage
+          }
+        };
+      }
       case "ExportCandidatePackage": {
         const workflowSnapshot = await buildWorkflowSession(paths.directory, document.project.name);
         const candidatePackage =
@@ -2526,7 +2934,9 @@ export async function executeWorkflowCommand(
 
         const updatedCandidatePackage: WorkflowCandidatePackage = {
           ...candidatePackage,
-          exportRunId: exportResult.result.exportRun.id
+          exportRunId: exportResult.result.exportRun.id,
+          reviewStatus: "exported",
+          reviewedAt: nowIso()
         };
 
         const workflowRun = getWorkflowRun(paths.databasePath, candidatePackage.workflowRunId);
@@ -2541,6 +2951,19 @@ export async function executeWorkflowCommand(
           upsertWorkflowArtifactRecord(paths.databasePath, {
             ...candidateArtifact,
             metadata: { ...updatedCandidatePackage }
+          });
+          recordWorkflowAuditEvent(paths.databasePath, {
+            workflowRunId: candidatePackage.workflowRunId,
+            stepRunId: candidateArtifact.stepRunId,
+            batchItemRunId: candidateArtifact.batchItemRunId,
+            candidatePackageId: candidatePackage.id,
+            kind: "candidate-review",
+            severity: "info",
+            message: "Candidate package exported.",
+            details: {
+              exportRunId: exportResult.result.exportRun.id,
+              presetId
+            }
           });
           await createWorkflowArtifact({
             databasePath: paths.databasePath,

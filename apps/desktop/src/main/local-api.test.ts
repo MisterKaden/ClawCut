@@ -343,6 +343,8 @@ function createFakeSnapshots(directory: string) {
     projectName: document.project.name,
     workflows: getBuiltInWorkflowTemplates(),
     brandKits: getBuiltInBrandKits(),
+    workflowProfiles: [],
+    schedules: [],
     workflowRuns: [
       {
         id: "workflow-run-1",
@@ -470,6 +472,58 @@ function createFakeSnapshots(directory: string) {
         createdAt,
         updatedAt: createdAt,
         resolvedAt: null
+      }
+    ],
+    candidatePackages: [
+      {
+        id: "candidate-package-1",
+        workflowRunId: "workflow-run-1",
+        sourceKind: "highlight" as const,
+        title: "Candidate opening clip",
+        timelineId: document.timeline.id,
+        transcriptId: null,
+        startUs: 1_000_000,
+        endUs: 2_000_000,
+        label: "Opening highlight",
+        sourceSuggestionSetId: "suggestion-set-1",
+        sourceSuggestionId: "suggestion-1",
+        regionId: null,
+        exportRunId: null,
+        snapshotArtifactIds: [],
+        reviewStatus: "new" as const,
+        reviewNotes: null,
+        reviewedAt: null,
+        createdAt
+      }
+    ],
+    auditEvents: [
+      {
+        id: "workflow-audit-1",
+        workflowRunId: "workflow-run-1",
+        stepRunId: "workflow-step-1",
+        batchItemRunId: null,
+        candidatePackageId: null,
+        kind: "run-created" as const,
+        severity: "info" as const,
+        message: "Created workflow run smart-cleanup-v1.",
+        details: {
+          templateId: "smart-cleanup-v1"
+        },
+        createdAt
+      },
+      {
+        id: "workflow-audit-2",
+        workflowRunId: "workflow-run-1",
+        stepRunId: null,
+        batchItemRunId: null,
+        candidatePackageId: "candidate-package-1",
+        kind: "candidate-review" as const,
+        severity: "info" as const,
+        message: "Candidate package Candidate opening clip marked shortlisted.",
+        details: {
+          reviewStatus: "shortlisted"
+        },
+        createdAt
       }
     ],
     activeWorkflowJobId: "job-workflow-1",
@@ -644,6 +698,19 @@ function createFakeWorker(directory: string, snapshots = createFakeSnapshots(dir
               workflowRun: snapshots.workflowSession.workflowRuns[0],
               queued: true
             }
+          : input.command.type === "ReviewWorkflowCandidatePackage"
+            ? {
+                ok: true,
+                commandType: "ReviewWorkflowCandidatePackage" as const,
+                candidatePackage: {
+                  ...snapshots.workflowSession.candidatePackages[0],
+                  reviewStatus: "approved" as const,
+                  reviewNotes: "Looks strong.",
+                  reviewedAt:
+                    snapshots.workflowSession.candidatePackages[0]?.createdAt ??
+                    new Date().toISOString()
+                }
+              }
           : {
               ok: true,
               commandType: "ApproveWorkflowStep" as const,
@@ -924,6 +991,12 @@ describe.sequential("LocalApiController", () => {
     expect(tools.body.data.some((entry) => entry.name === "clawcut.capture_preview_frame")).toBe(
       true
     );
+    expect(tools.body.data.some((entry) => entry.name === "clawcut.list_candidate_packages")).toBe(
+      true
+    );
+    expect(tools.body.data.some((entry) => entry.name === "clawcut.review_candidate_package")).toBe(
+      true
+    );
     expect(manifest.status).toBe(200);
     expect(manifest.body.data.manifestVersion).toBe("1");
     expect(manifest.body.data.protocolVersion).toBe("1");
@@ -931,6 +1004,9 @@ describe.sequential("LocalApiController", () => {
     expect(manifest.body.data.capabilityAvailability.openClawPlugin).toBe(true);
     expect(manifest.body.data.endpoints.events).toBe("/api/v1/events");
     expect(manifest.body.data.tools.some((entry) => entry.name === "clawcut.capture_preview_frame")).toBe(
+      true
+    );
+    expect(manifest.body.data.tools.some((entry) => entry.name === "clawcut.list_workflow_audit_events")).toBe(
       true
     );
   });
@@ -1126,6 +1202,7 @@ describe.sequential("LocalApiController", () => {
         workflows: Array<{ id: string }>;
         workflowRuns: Array<{ id: string; status: string }>;
         pendingApprovals: Array<{ id: string }>;
+        candidatePackages: Array<{ id: string; reviewStatus: string }>;
       };
     }>(started.status.baseUrl, "/api/v1/query", {
       method: "POST",
@@ -1134,6 +1211,60 @@ describe.sequential("LocalApiController", () => {
         name: "workflow.session",
         input: {
           directory: started.directory
+        }
+      }
+    });
+    const workflowAuditEvents = await requestJson<{
+      ok: true;
+      data: Array<{ id: string; kind: string; candidatePackageId: string | null }>;
+    }>(started.status.baseUrl, "/api/v1/query", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "workflow.auditEvents",
+        input: {
+          directory: started.directory
+        }
+      }
+    });
+    const workflowPreviewCandidate = await requestJson<{
+      ok: true;
+      data: {
+        candidatePackageId: string;
+        positionUs: number;
+        loadedTimeline: boolean;
+        preview: { ok: true; commandType: string };
+      };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "workflow.seekPreviewToCandidatePackage",
+        input: {
+          directory: started.directory,
+          candidatePackageId: "candidate-package-1"
+        }
+      }
+    });
+    const workflowReviewCandidate = await requestJson<{
+      ok: true;
+      data: {
+        result: {
+          ok: true;
+          commandType: string;
+          candidatePackage: { id: string; reviewStatus: string; reviewNotes: string | null };
+        };
+      };
+    }>(started.status.baseUrl, "/api/v1/command", {
+      method: "POST",
+      token: started.token,
+      body: {
+        name: "workflow.reviewCandidatePackage",
+        input: {
+          directory: started.directory,
+          candidatePackageId: "candidate-package-1",
+          reviewStatus: "approved",
+          reviewNotes: "Looks strong."
         }
       }
     });
@@ -1182,6 +1313,20 @@ describe.sequential("LocalApiController", () => {
     expect(workflowSession.body.data.workflows.some((workflow) => workflow.id === "smart-cleanup-v1")).toBe(true);
     expect(workflowSession.body.data.workflowRuns[0]?.id).toBe("workflow-run-1");
     expect(workflowSession.body.data.pendingApprovals[0]?.id).toBe("workflow-approval-1");
+    expect(workflowSession.body.data.candidatePackages[0]?.id).toBe("candidate-package-1");
+    expect(
+      workflowAuditEvents.body.data.some((event) => event.id === "workflow-audit-1")
+    ).toBe(true);
+    expect(workflowPreviewCandidate.body.data.candidatePackageId).toBe("candidate-package-1");
+    expect(workflowPreviewCandidate.body.data.positionUs).toBe(1_500_000);
+    expect(workflowPreviewCandidate.body.data.preview.commandType).toBe("SeekPreview");
+    expect(workflowReviewCandidate.body.data.result.commandType).toBe(
+      "ReviewWorkflowCandidatePackage"
+    );
+    expect(workflowReviewCandidate.body.data.result.candidatePackage.reviewStatus).toBe("approved");
+    expect(workflowReviewCandidate.body.data.result.candidatePackage.reviewNotes).toBe(
+      "Looks strong."
+    );
     expect(workflowStart.body.data.result.commandType).toBe("StartWorkflow");
     expect(started.worker.openProject).toHaveBeenCalledWith({ directory: started.directory });
     expect(started.worker.getEditorSessionSnapshot).toHaveBeenCalledWith({
@@ -1196,6 +1341,10 @@ describe.sequential("LocalApiController", () => {
     expect(started.preview.executeCommand).toHaveBeenCalledWith({
       type: "SeekPreview",
       positionUs: 700_000
+    });
+    expect(started.preview.executeCommand).toHaveBeenCalledWith({
+      type: "SeekPreview",
+      positionUs: 1_500_000
     });
     expect(started.preview.getPreviewState).toHaveBeenCalled();
     expect(started.preview.captureFrameSnapshot).toHaveBeenCalled();

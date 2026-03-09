@@ -370,12 +370,12 @@ export async function runSmoke(): Promise<void> {
   const packagedExecutable = process.env.CLAWCUT_SMOKE_EXECUTABLE?.trim() || null;
   const electronBinary = packagedExecutable || (require("electron") as string);
   const mainEntry = resolve(appRoot, "out/main/index.js");
-  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage11-smoke-project-"));
+  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage12-smoke-project-"));
   const workflowProjectDirectory = mkdtempSync(
-    join(tmpdir(), "clawcut-stage11-smoke-workflow-project-")
+    join(tmpdir(), "clawcut-stage12-smoke-workflow-project-")
   );
-  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage11-smoke-import-"));
-  const userDataDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage11-smoke-userdata-"));
+  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage12-smoke-import-"));
+  const userDataDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage12-smoke-userdata-"));
   const originalPath = join(importDirectory, "talking-head-sample.mp4");
   const transcriptionFixturePath = join(importDirectory, "stage9-transcript.txt");
   const screenshotDirectory = resolve(workspaceRoot, "output/playwright");
@@ -411,10 +411,10 @@ export async function runSmoke(): Promise<void> {
     const page = await electronApp.firstWindow();
 
     await page.getByTestId("project-directory-input").fill(projectDirectory);
-    await page.getByTestId("project-name-input").fill("Stage 11 Smoke");
+    await page.getByTestId("project-name-input").fill("Stage 12 Smoke");
     await page.getByTestId("create-project-button").click();
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 11 Smoke") === true,
+      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 12 Smoke") === true,
       undefined,
       {
         timeout: 10_000
@@ -423,7 +423,7 @@ export async function runSmoke(): Promise<void> {
 
     const projectHeading = await page.getByTestId("workspace-header").textContent();
 
-    if (!projectHeading?.includes("Stage 11 Smoke")) {
+    if (!projectHeading?.includes("Stage 12 Smoke")) {
       throw new Error(`Smoke project was not opened. Header text: ${projectHeading ?? "missing"}`);
     }
 
@@ -435,7 +435,9 @@ export async function runSmoke(): Promise<void> {
         "clawcut.generate_captions",
         "clawcut.reject_suggestion",
         "clawcut.seek_preview_to_suggestion",
-        "clawcut.generate_social_candidates"
+        "clawcut.generate_social_candidates",
+        "clawcut.seek_preview_to_candidate_package",
+        "clawcut.review_candidate_package"
       ],
       enabledHighImpactTools: [
         "clawcut.approve_workflow_step",
@@ -2508,7 +2510,87 @@ export async function runSmoke(): Promise<void> {
     });
 
     if (!candidatePackages.body.ok || candidatePackages.body.data.length === 0) {
-      throw new Error("Candidate package query did not expose the generated Stage 11 packages.");
+      throw new Error("Candidate package query did not expose the generated Stage 12 packages.");
+    }
+
+    const candidatePreview = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        candidatePackageId: string;
+        positionUs: number;
+        loadedTimeline: boolean;
+        preview: { ok: boolean; commandType: string };
+      };
+    }>(localApi, "/api/v1/command", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflow.seekPreviewToCandidatePackage",
+        input: {
+          directory: workflowProjectDirectory,
+          candidatePackageId: candidatePackages.body.data[0]?.id
+        }
+      }
+    });
+
+    if (
+      !candidatePreview.body.ok ||
+      candidatePreview.body.data.candidatePackageId !== candidatePackages.body.data[0]?.id ||
+      candidatePreview.body.data.preview.commandType !== "SeekPreview"
+    ) {
+      throw new Error("Candidate package preview seek did not resolve through the control surface.");
+    }
+
+    const reviewedCandidate = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        candidatePackage: { id: string; reviewStatus: string };
+      };
+    }>("clawcut.review_candidate_package", {
+      directory: workflowProjectDirectory,
+      candidatePackageId: candidatePackages.body.data[0]?.id,
+      reviewStatus: "approved",
+      reviewNotes: "Strong candidate with a clear hook."
+    });
+
+    if (
+      !reviewedCandidate.response.ok ||
+      !reviewedCandidate.response.data.result.ok ||
+      reviewedCandidate.response.data.result.commandType !== "ReviewWorkflowCandidatePackage" ||
+      reviewedCandidate.response.data.result.candidatePackage.reviewStatus !== "approved"
+    ) {
+      throw new Error("Candidate package review did not run through the OpenClaw boundary.");
+    }
+
+    const workflowAuditEvents = await requestLocalApi<{
+      ok: boolean;
+      data: Array<{
+        kind: string;
+        candidatePackageId: string | null;
+        message: string;
+      }>;
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflow.auditEvents",
+        input: {
+          directory: workflowProjectDirectory
+        }
+      }
+    });
+
+    if (
+      !workflowAuditEvents.body.ok ||
+      !workflowAuditEvents.body.data.some(
+        (event) =>
+          event.kind === "candidate-review" &&
+          event.candidatePackageId === candidatePackages.body.data[0]?.id
+      )
+    ) {
+      throw new Error("Workflow audit events did not capture candidate review activity.");
     }
 
     const candidateExport = await openClawClient.invokeTool<{
@@ -2533,7 +2615,7 @@ export async function runSmoke(): Promise<void> {
     }
 
     await page.screenshot({
-      path: resolve(screenshotDirectory, "clawcut-stage11-smoke.png"),
+      path: resolve(screenshotDirectory, "clawcut-stage12-smoke.png"),
       fullPage: true
     });
   } finally {

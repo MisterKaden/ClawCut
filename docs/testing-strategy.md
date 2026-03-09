@@ -55,6 +55,8 @@ Current worker coverage includes:
 - workflow profile persistence and default-input resolution
 - workflow schedule persistence and due-run behavior
 - candidate-package generation and export behavior
+- candidate-package review persistence
+- workflow audit-event persistence and query behavior
 
 These tests intentionally exercise the worker-owned services instead of reproducing logic inside test helpers.
 
@@ -79,6 +81,8 @@ Current coverage includes:
 - workflow and brand-kit operation mapping
 - workflow profile and schedule operation mapping
 - candidate-package query/export mapping
+- candidate-package review and preview-seek mapping
+- workflow audit-event query mapping
 
 The goal is to keep OpenClaw and local automation on the same typed contract the UI already uses.
 
@@ -123,8 +127,9 @@ Current smoke coverage includes:
 20. create and run a reusable workflow profile
 21. create, pause, and resume a local workflow schedule
 22. run Stage 11 social candidate packaging and export one candidate package
-23. inspect diagnostics/recovery visibility in-app
-24. capture a screenshot artifact
+23. review a candidate package, seek preview to it, and verify workflow audit history
+24. inspect diagnostics/recovery visibility in-app
+25. capture a screenshot artifact
 
 The smoke path is intentionally fixture-driven and deterministic:
 

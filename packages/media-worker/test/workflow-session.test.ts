@@ -402,6 +402,83 @@ describe.sequential("workflow session", () => {
       true
     );
     expect(snapshot.candidatePackages.length).toBeGreaterThan(0);
+    expect(snapshot.auditEvents.some((event) => event.kind === "run-created")).toBe(true);
+    expect(snapshot.auditEvents.some((event) => event.kind === "artifact")).toBe(true);
+  });
+
+  test("updates candidate-package review state and records workflow audit events", async () => {
+    const directory = registerTempDirectory("clawcut-stage12-candidate-review-");
+    const fixturePath = resolve(process.cwd(), "fixtures/media/talking-head-sample.mp4");
+
+    await createProject(directory, "Stage 12 Candidate Review");
+    const mediaItem = await createMediaItemFromFixture("media-video", "Talking Head", fixturePath);
+    const seeded = await seedVideoTimeline(directory, mediaItem);
+
+    const started = await executeWorkflowCommand({
+      directory,
+      command: {
+        type: "StartWorkflow",
+        templateId: "social-candidate-package-v1",
+        input: {
+          clipId: seeded.clipId
+        }
+      }
+    });
+
+    expect(started.result.ok).toBe(true);
+
+    if (!started.result.ok || started.result.commandType !== "StartWorkflow") {
+      return;
+    }
+
+    await waitForWorkflowState(directory, started.result.workflowRun.id, ["completed"]);
+    const beforeReview = await getWorkflowSessionSnapshot({ directory });
+    const candidatePackage = beforeReview.candidatePackages[0];
+
+    expect(candidatePackage).toBeTruthy();
+    expect(beforeReview.auditEvents.some((event) => event.kind === "artifact")).toBe(true);
+
+    if (!candidatePackage) {
+      throw new Error("Expected a generated candidate package.");
+    }
+
+    const reviewed = await executeWorkflowCommand({
+      directory,
+      command: {
+        type: "ReviewWorkflowCandidatePackage",
+        candidatePackageId: candidatePackage.id,
+        reviewStatus: "shortlisted",
+        reviewNotes: "Strong opening beat."
+      }
+    });
+
+    expect(reviewed.result.ok).toBe(true);
+
+    if (
+      !reviewed.result.ok ||
+      reviewed.result.commandType !== "ReviewWorkflowCandidatePackage"
+    ) {
+      return;
+    }
+
+    expect(reviewed.result.candidatePackage.reviewStatus).toBe("shortlisted");
+    expect(reviewed.result.candidatePackage.reviewNotes).toBe("Strong opening beat.");
+
+    const afterReview = await getWorkflowSessionSnapshot({ directory });
+    const updatedCandidate = afterReview.candidatePackages.find(
+      (entry) => entry.id === candidatePackage.id
+    );
+
+    expect(updatedCandidate?.reviewStatus).toBe("shortlisted");
+    expect(updatedCandidate?.reviewNotes).toBe("Strong opening beat.");
+    expect(
+      afterReview.auditEvents.some(
+        (event) =>
+          event.kind === "candidate-review" &&
+          event.candidatePackageId === candidatePackage.id &&
+          event.message.includes("shortlisted")
+      )
+    ).toBe(true);
   });
 
   test("runs smart cleanup through approval and preserves undoability after application", async () => {

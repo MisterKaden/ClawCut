@@ -91,6 +91,23 @@ export const WORKFLOW_TARGET_RESOLVER_KINDS = [
   "static-clip-ids",
   "all-video-clips"
 ] as const;
+export const WORKFLOW_CANDIDATE_REVIEW_STATUSES = [
+  "new",
+  "shortlisted",
+  "approved",
+  "rejected",
+  "exported"
+] as const;
+export const WORKFLOW_AUDIT_EVENT_KINDS = [
+  "run-created",
+  "run-status",
+  "step-status",
+  "approval",
+  "artifact",
+  "candidate-review",
+  "schedule"
+] as const;
+export const WORKFLOW_AUDIT_EVENT_SEVERITIES = ["info", "warning", "error"] as const;
 
 export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
 export type WorkflowStepStatus = (typeof WORKFLOW_STEP_STATUSES)[number];
@@ -112,6 +129,12 @@ export type WorkflowScheduleTriggerKind =
   (typeof WORKFLOW_SCHEDULE_TRIGGER_KINDS)[number];
 export type WorkflowTargetResolverKind =
   (typeof WORKFLOW_TARGET_RESOLVER_KINDS)[number];
+export type WorkflowCandidateReviewStatus =
+  (typeof WORKFLOW_CANDIDATE_REVIEW_STATUSES)[number];
+export type WorkflowAuditEventKind =
+  (typeof WORKFLOW_AUDIT_EVENT_KINDS)[number];
+export type WorkflowAuditEventSeverity =
+  (typeof WORKFLOW_AUDIT_EVENT_SEVERITIES)[number];
 
 export type WorkflowTemplateId =
   | "captioned-export-v1"
@@ -187,6 +210,22 @@ export interface WorkflowCandidatePackage {
   regionId: string | null;
   exportRunId: string | null;
   snapshotArtifactIds: string[];
+  reviewStatus: WorkflowCandidateReviewStatus;
+  reviewNotes: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
+export interface WorkflowAuditEvent {
+  id: string;
+  workflowRunId: string | null;
+  stepRunId: string | null;
+  batchItemRunId: string | null;
+  candidatePackageId: string | null;
+  kind: WorkflowAuditEventKind;
+  severity: WorkflowAuditEventSeverity;
+  message: string;
+  details: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -351,6 +390,7 @@ export interface WorkflowSessionSnapshot {
   schedules: WorkflowSchedule[];
   workflowRuns: WorkflowRun[];
   candidatePackages: WorkflowCandidatePackage[];
+  auditEvents: WorkflowAuditEvent[];
   pendingApprovals: WorkflowApproval[];
   activeWorkflowJobId: string | null;
   lastError: JobError | null;
@@ -376,6 +416,7 @@ export type WorkflowCommandType =
   | "PauseWorkflowSchedule"
   | "ResumeWorkflowSchedule"
   | "DeleteWorkflowSchedule"
+  | "ReviewWorkflowCandidatePackage"
   | "ExportCandidatePackage";
 
 export interface StartWorkflowCommand {
@@ -486,6 +527,13 @@ export interface DeleteWorkflowScheduleCommand {
   scheduleId: string;
 }
 
+export interface ReviewWorkflowCandidatePackageCommand {
+  type: "ReviewWorkflowCandidatePackage";
+  candidatePackageId: string;
+  reviewStatus: WorkflowCandidateReviewStatus;
+  reviewNotes?: string | null;
+}
+
 export interface ExportCandidatePackageCommand {
   type: "ExportCandidatePackage";
   candidatePackageId: string;
@@ -512,6 +560,7 @@ export type WorkflowCommand =
   | PauseWorkflowScheduleCommand
   | ResumeWorkflowScheduleCommand
   | DeleteWorkflowScheduleCommand
+  | ReviewWorkflowCandidatePackageCommand
   | ExportCandidatePackageCommand;
 
 export interface WorkflowCommandError {
@@ -599,6 +648,12 @@ export interface WorkflowScheduleMutationResult {
   scheduleId: string | null;
 }
 
+export interface ReviewWorkflowCandidatePackageResult {
+  ok: true;
+  commandType: "ReviewWorkflowCandidatePackage";
+  candidatePackage: WorkflowCandidatePackage;
+}
+
 export interface ExportCandidatePackageResult {
   ok: true;
   commandType: "ExportCandidatePackage";
@@ -615,6 +670,7 @@ export type WorkflowCommandResult =
   | BrandKitMutationResult
   | WorkflowProfileMutationResult
   | WorkflowScheduleMutationResult
+  | ReviewWorkflowCandidatePackageResult
   | ExportCandidatePackageResult;
 
 export const workflowProfileSchema = z.object({
@@ -703,6 +759,22 @@ export const workflowCandidatePackageSchema = z.object({
   regionId: z.string().min(1).nullable(),
   exportRunId: z.string().min(1).nullable(),
   snapshotArtifactIds: z.array(z.string().min(1)),
+  reviewStatus: z.enum(WORKFLOW_CANDIDATE_REVIEW_STATUSES).default("new"),
+  reviewNotes: z.string().nullable().default(null),
+  reviewedAt: z.string().datetime().nullable().default(null),
+  createdAt: z.string().datetime()
+});
+
+export const workflowAuditEventSchema = z.object({
+  id: z.string().min(1),
+  workflowRunId: z.string().min(1).nullable(),
+  stepRunId: z.string().min(1).nullable(),
+  batchItemRunId: z.string().min(1).nullable(),
+  candidatePackageId: z.string().min(1).nullable(),
+  kind: z.enum(WORKFLOW_AUDIT_EVENT_KINDS),
+  severity: z.enum(WORKFLOW_AUDIT_EVENT_SEVERITIES),
+  message: z.string().min(1),
+  details: z.record(z.unknown()),
   createdAt: z.string().datetime()
 });
 
@@ -1462,6 +1534,9 @@ export function createWorkflowSessionSnapshot(input: WorkflowSessionSnapshot): W
   return {
     ...input,
     candidatePackages,
+    auditEvents: [...input.auditEvents].sort((left, right) =>
+      left.createdAt < right.createdAt ? 1 : left.createdAt > right.createdAt ? -1 : 0
+    ),
     workflowRuns: input.workflowRuns.map((run) => ({
       ...run,
       summary: summarizeWorkflowRun(run)

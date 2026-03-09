@@ -235,6 +235,16 @@ Stage 11 also adds higher-level reusable automation surfaces:
 - `workflow.candidatePackages`
 - `workflow.candidatePackage`
 
+Stage 12 extends that review surface with:
+
+- `workflow.auditEvents`
+- `workflow.seekPreviewToCandidatePackage`
+- `workflow.reviewCandidatePackage`
+- tools:
+  - `clawcut.list_workflow_audit_events`
+  - `clawcut.seek_preview_to_candidate_package`
+  - `clawcut.review_candidate_package`
+
 `preview.frame-reference` is the cheap default for OpenClaw-style reasoning. It returns timing, clip identity, source mode, dimensions, and warning/error state without requiring inline image data.
 
 ## Known limitations

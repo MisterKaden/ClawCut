@@ -85,6 +85,11 @@ Current tool coverage includes:
 - `clawcut.pause_schedule`
 - `clawcut.resume_schedule`
 - `clawcut.generate_social_candidates`
+- `clawcut.list_candidate_packages`
+- `clawcut.inspect_candidate_package`
+- `clawcut.list_workflow_audit_events`
+- `clawcut.seek_preview_to_candidate_package`
+- `clawcut.review_candidate_package`
 - `clawcut.export_candidate_package`
 
 Each tool carries:
@@ -180,6 +185,23 @@ Typical reusable flow:
 6. inspect workflow artifacts, candidate packages, or exported results
 
 Local schedules remain optional and allowlist-friendly. They are intended as machine-local hooks for repeatable profile-driven automation, not as a remote scheduling system.
+
+## Stage 12 review and audit surface
+
+Stage 12 adds a review-first surface for candidate packages produced by workflow automation.
+
+Typical review loop:
+
+1. `clawcut.generate_social_candidates`
+2. `clawcut.list_candidate_packages`
+3. `clawcut.inspect_candidate_package`
+4. `clawcut.seek_preview_to_candidate_package`
+5. `clawcut.review_candidate_package`
+6. `clawcut.list_workflow_audit_events`
+7. `clawcut.export_candidate_package`
+
+This keeps “interesting candidate found” distinct from “candidate was reviewed” and distinct again
+from “candidate was exported”.
 
 ## Preview note
 

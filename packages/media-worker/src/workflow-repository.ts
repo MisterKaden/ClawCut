@@ -1,6 +1,7 @@
 import {
   createEmptyRecoveryInfo,
   summarizeWorkflowRun,
+  type WorkflowAuditEvent,
   type WorkflowApproval,
   type WorkflowArtifact,
   type WorkflowBatchItemRun,
@@ -95,6 +96,19 @@ interface WorkflowArtifactRow {
   created_at: string;
 }
 
+interface WorkflowAuditEventRow {
+  id: string;
+  workflow_run_id: string | null;
+  step_run_id: string | null;
+  batch_item_run_id: string | null;
+  candidate_package_id: string | null;
+  kind: WorkflowAuditEvent["kind"];
+  severity: WorkflowAuditEvent["severity"];
+  message: string;
+  details_json: string;
+  created_at: string;
+}
+
 function rowToWorkflowStepRun(row: WorkflowStepRunRow): WorkflowStepRun {
   return {
     id: row.id,
@@ -163,6 +177,21 @@ function rowToWorkflowArtifact(row: WorkflowArtifactRow): WorkflowArtifact {
     label: row.label,
     path: row.path,
     metadata: JSON.parse(row.metadata_json) as WorkflowArtifact["metadata"],
+    createdAt: row.created_at
+  };
+}
+
+function rowToWorkflowAuditEvent(row: WorkflowAuditEventRow): WorkflowAuditEvent {
+  return {
+    id: row.id,
+    workflowRunId: row.workflow_run_id,
+    stepRunId: row.step_run_id,
+    batchItemRunId: row.batch_item_run_id,
+    candidatePackageId: row.candidate_package_id,
+    kind: row.kind,
+    severity: row.severity,
+    message: row.message,
+    details: JSON.parse(row.details_json) as WorkflowAuditEvent["details"],
     createdAt: row.created_at
   };
 }
@@ -334,6 +363,36 @@ function listWorkflowArtifactsInternal(databasePath: string): WorkflowArtifact[]
   }
 }
 
+function listWorkflowAuditEventsInternal(databasePath: string): WorkflowAuditEvent[] {
+  const { database, close } = openProjectDatabase(databasePath);
+
+  try {
+    return (
+      database
+        .prepare(
+          `
+          SELECT
+            id,
+            workflow_run_id,
+            step_run_id,
+            batch_item_run_id,
+            candidate_package_id,
+            kind,
+            severity,
+            message,
+            details_json,
+            created_at
+          FROM workflow_audit_events
+          ORDER BY created_at DESC
+        `
+        )
+        .all() as WorkflowAuditEventRow[]
+    ).map(rowToWorkflowAuditEvent);
+  } finally {
+    close();
+  }
+}
+
 function assembleWorkflowRuns(databasePath: string): WorkflowRun[] {
   const stepRuns = listWorkflowStepRuns(databasePath);
   const batchItems = listWorkflowBatchItems(databasePath);
@@ -401,6 +460,14 @@ export function listWorkflowArtifacts(
   return listWorkflowArtifactsInternal(databasePath).filter(
     (artifact) => artifact.workflowRunId === workflowRunId
   );
+}
+
+export function listWorkflowAuditEvents(
+  databasePath: string,
+  workflowRunId?: string
+): WorkflowAuditEvent[] {
+  const events = listWorkflowAuditEventsInternal(databasePath);
+  return workflowRunId ? events.filter((event) => event.workflowRunId === workflowRunId) : events;
 }
 
 export function createWorkflowRunRecord(databasePath: string, run: WorkflowRun): void {
@@ -798,4 +865,50 @@ export function upsertWorkflowArtifactRecord(
   );
 
   return artifact;
+}
+
+export function upsertWorkflowAuditEventRecord(
+  databasePath: string,
+  event: WorkflowAuditEvent
+): WorkflowAuditEvent {
+  upsertRecord(
+    databasePath,
+    "workflow_audit_events",
+    [
+      "id",
+      "workflow_run_id",
+      "step_run_id",
+      "batch_item_run_id",
+      "candidate_package_id",
+      "kind",
+      "severity",
+      "message",
+      "details_json",
+      "created_at"
+    ],
+    {
+      id: event.id,
+      workflow_run_id: event.workflowRunId,
+      step_run_id: event.stepRunId,
+      batch_item_run_id: event.batchItemRunId,
+      candidate_package_id: event.candidatePackageId,
+      kind: event.kind,
+      severity: event.severity,
+      message: event.message,
+      details_json: JSON.stringify(event.details),
+      created_at: event.createdAt
+    },
+    `
+      workflow_run_id = excluded.workflow_run_id,
+      step_run_id = excluded.step_run_id,
+      batch_item_run_id = excluded.batch_item_run_id,
+      candidate_package_id = excluded.candidate_package_id,
+      kind = excluded.kind,
+      severity = excluded.severity,
+      message = excluded.message,
+      details_json = excluded.details_json
+    `
+  );
+
+  return event;
 }

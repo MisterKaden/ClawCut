@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import Database from "better-sqlite3";
 
-export const DATABASE_SCHEMA_VERSION = 3;
+export const DATABASE_SCHEMA_VERSION = 4;
 
 const EMPTY_RECOVERY_JSON =
   '{"state":"none","interruptedAt":null,"reason":null,"recommendedAction":null,"handledAt":null,"dismissedAt":null,"replacementRunId":null}';
@@ -283,6 +283,19 @@ const MIGRATIONS: DatabaseMigration[] = [
           metadata_json TEXT NOT NULL,
           created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS workflow_audit_events (
+          id TEXT PRIMARY KEY,
+          workflow_run_id TEXT,
+          step_run_id TEXT,
+          batch_item_run_id TEXT,
+          candidate_package_id TEXT,
+          kind TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          message TEXT NOT NULL,
+          details_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
       `);
     }
   },
@@ -301,6 +314,25 @@ const MIGRATIONS: DatabaseMigration[] = [
     apply(database) {
       addColumnIfMissing(database, "workflow_runs", "profile_id", "TEXT");
       addColumnIfMissing(database, "workflow_runs", "schedule_id", "TEXT");
+    }
+  },
+  {
+    id: 4,
+    apply(database) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS workflow_audit_events (
+          id TEXT PRIMARY KEY,
+          workflow_run_id TEXT,
+          step_run_id TEXT,
+          batch_item_run_id TEXT,
+          candidate_package_id TEXT,
+          kind TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          message TEXT NOT NULL,
+          details_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
     }
   }
 ];
