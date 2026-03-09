@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import Database from "better-sqlite3";
 
-export const DATABASE_SCHEMA_VERSION = 2;
+export const DATABASE_SCHEMA_VERSION = 3;
 
 const EMPTY_RECOVERY_JSON =
   '{"state":"none","interruptedAt":null,"reason":null,"recommendedAction":null,"handledAt":null,"dismissedAt":null,"replacementRunId":null}';
@@ -294,6 +294,13 @@ const MIGRATIONS: DatabaseMigration[] = [
       addColumnIfMissing(database, "transcription_runs", "recovery_json", `TEXT NOT NULL DEFAULT '${EMPTY_RECOVERY_JSON}'`);
       addColumnIfMissing(database, "smart_analysis_runs", "recovery_json", `TEXT NOT NULL DEFAULT '${EMPTY_RECOVERY_JSON}'`);
       addColumnIfMissing(database, "workflow_runs", "recovery_json", `TEXT NOT NULL DEFAULT '${EMPTY_RECOVERY_JSON}'`);
+    }
+  },
+  {
+    id: 3,
+    apply(database) {
+      addColumnIfMissing(database, "workflow_runs", "profile_id", "TEXT");
+      addColumnIfMissing(database, "workflow_runs", "schedule_id", "TEXT");
     }
   }
 ];

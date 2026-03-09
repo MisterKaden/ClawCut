@@ -359,4 +359,60 @@ describe("render compiler", () => {
       templateIds: []
     });
   });
+
+  test("preserves brand packaging hooks in the normalized export request and render plan", () => {
+    const fixture = createTimelineFixture();
+
+    const result = compileRenderPlan(
+      fixture.timeline,
+      fixture.mediaItemsById,
+      "video-share-720p",
+      {
+        timelineId: fixture.timeline.id,
+        presetId: "video-share-720p",
+        brandPackaging: {
+          introAsset: {
+            absolutePath: "/tmp/intro.mp4",
+            label: "Intro"
+          },
+          outroAsset: {
+            absolutePath: "/tmp/outro.mp4",
+            label: "Outro"
+          },
+          watermarkAsset: {
+            absolutePath: "/tmp/watermark.png",
+            label: "Logo",
+            position: "top-right",
+            marginPx: 32,
+            opacity: 0.8
+          }
+        }
+      }
+    );
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.request.brandPackaging).toMatchObject({
+      introAsset: {
+        absolutePath: "/tmp/intro.mp4",
+        label: "Intro"
+      },
+      outroAsset: {
+        absolutePath: "/tmp/outro.mp4",
+        label: "Outro"
+      },
+      watermarkAsset: {
+        absolutePath: "/tmp/watermark.png",
+        label: "Logo",
+        position: "top-right",
+        marginPx: 32,
+        opacity: 0.8
+      }
+    });
+    expect(result.renderPlan.brandPackaging).toEqual(result.request.brandPackaging);
+  });
 });

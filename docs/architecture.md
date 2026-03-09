@@ -369,7 +369,7 @@ This is the core safety boundary that later allows OpenClaw to orchestrate workf
 
 ## Brand kits
 
-Stage 9 introduces reusable brand kits as local, versioned, app-owned style packs.
+Stage 11 extends brand kits into reusable local packaging packs.
 
 Brand kits live outside the project document in app-local storage and currently contain:
 
@@ -377,15 +377,18 @@ Brand kits live outside the project document in app-local storage and currently 
 - caption style overrides
 - safe-zone defaults
 - export preset reference
-- logo/watermark placeholder hook
-- intro/outro placeholder hook
+- watermark asset path
+- intro asset path
+- outro asset path
+- layout defaults
+- export preset bundle metadata
 
 Projects only keep:
 
 - the default brand-kit id
 - resolved style snapshot on caption tracks when applied
 
-That keeps projects portable even if a user-defined local kit later disappears.
+That keeps projects portable even if a user-defined local kit later disappears or its local assets move.
 
 ## Preview, captions, and export integration
 
@@ -398,6 +401,34 @@ Current integration path:
 - preview consumes caption track + style overrides
 - subtitle export consumes caption track + style overrides
 - burn-in export consumes caption track + style overrides through structured render hooks
+
+For Stage 11 packaging workflows:
+
+- workflow/export planning resolves `brandPackaging`
+- export runtime validates intro/outro/watermark asset paths in the worker
+- intro and outro assets are transcoded into preset-compatible intermediates
+- watermark overlays are applied as a worker-owned FFmpeg stage
+- development manifests record these packaging steps for debugging
+
+## Workflow profiles and schedules
+
+Stage 11 adds two machine-local reusable automation layers on top of built-in workflow templates.
+
+Workflow profiles:
+
+- bind a built-in `templateId` to reusable defaults
+- carry approval policy, brand-kit defaults, export defaults, and optional-step preferences
+- are stored in app data rather than projects
+
+Workflow schedules:
+
+- also live in app data
+- point at workflow profiles
+- resolve targets inside one project
+- trigger normal workflow-profile runs through a lightweight main-process scheduler
+- never bypass approval boundaries or workflow validation
+
+The scheduler is intentionally a thin trigger loop, not a second orchestration engine.
 
 ## Artifact model
 
@@ -414,6 +445,11 @@ Current artifact kinds:
 - snapshot
 - regions
 - diagnostic
+- candidate-package
+- candidate-export
+- transcript-range-selection
+- brand-asset
+- schedule-report
 
 Artifacts are linked to:
 
@@ -425,7 +461,7 @@ This makes higher-level automation inspectable and reusable.
 
 ## Batch model
 
-Stage 9 batch processing is intentionally scoped:
+Stage 11 batch processing is intentionally scoped:
 
 - one project at a time
 - multiple target clip ids inside that project
@@ -435,10 +471,11 @@ Stage 9 batch processing is intentionally scoped:
 
 Cross-project workflow batching is explicitly deferred.
 
-## Known Stage 9 limitations
+## Known Stage 11 limitations
 
-- Workflow authoring is built-in only. There is no custom workflow DSL yet.
+- Workflow authoring is still built-in/profile-based only. There is no custom workflow DSL yet.
 - Execution is sequential even though definitions carry dependency metadata.
 - Approval is explicit but still polling/SSE-driven rather than a richer distributed event model.
 - Brand kits are local to the current machine/app data, not shared assets.
 - Batch runs are project-scoped, not multi-project orchestration.
+- Scheduling is local-only and lightweight, not a distributed scheduler.

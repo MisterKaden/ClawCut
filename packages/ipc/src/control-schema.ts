@@ -399,7 +399,9 @@ const workflowTemplateIdSchema = z.enum([
   "captioned-export-v1",
   "smart-cleanup-v1",
   "short-clip-candidates-v1",
-  "batch-caption-export-v1"
+  "batch-caption-export-v1",
+  "social-candidate-package-v1",
+  "transcript-range-package-v1"
 ]);
 const captionTemplateIdSchema = z.enum([
   "bottom-center-clean",
@@ -430,7 +432,7 @@ const brandKitPayloadSchema = z.object({
       textColor: nonEmptyString.optional(),
       accentColor: nonEmptyString.optional(),
       backgroundStyle: z.enum(["none", "boxed", "card", "highlight"]).optional(),
-      activeWordStyle: z.enum(["none", "highlight", "underline"]).optional()
+      activeWordStyle: z.enum(["none", "highlight"]).optional()
     })
     .default({}),
   safeZoneDefaults: z.object({
@@ -439,14 +441,102 @@ const brandKitPayloadSchema = z.object({
     alignment: z.enum(["left", "center", "right"])
   }),
   exportPresetId: exportPresetIdSchema,
-  logoWatermark: z.object({
-    kind: z.enum(["none", "placeholder"]),
+  watermarkAsset: z.object({
+    kind: z.enum(["none", "file"]),
+    absolutePath: z.string().nullable(),
+    label: z.string().nullable(),
+    position: z.enum(["top-left", "top-right", "bottom-left", "bottom-right"]),
+    marginPx: z.number().int().nonnegative(),
+    opacity: z.number().min(0).max(1)
+  }),
+  introAsset: z.object({
+    kind: z.enum(["none", "file"]),
+    absolutePath: z.string().nullable(),
     label: z.string().nullable()
   }),
-  introOutro: z.object({
-    introPreset: z.string().nullable(),
-    outroPreset: z.string().nullable()
-  })
+  outroAsset: z.object({
+    kind: z.enum(["none", "file"]),
+    absolutePath: z.string().nullable(),
+    label: z.string().nullable()
+  }),
+  audioBed: z.object({
+    kind: z.enum(["none", "file"]),
+    absolutePath: z.string().nullable(),
+    label: z.string().nullable()
+  }),
+  layoutDefaults: z.object({
+    safeZoneAnchor: z.enum(["title-safe", "action-safe"]),
+    placement: z.enum(["bottom-center", "lower-third", "top-headline", "center-card"]),
+    alignment: z.enum(["left", "center", "right"])
+  }),
+  exportPresetBundle: z.object({
+    primaryPresetId: exportPresetIdSchema,
+    socialPresetId: exportPresetIdSchema.nullable()
+  }),
+  source: z.enum(["built-in", "user"])
+});
+const workflowProfilePayloadSchema = z.object({
+  id: nonEmptyString,
+  version: z.number().int().positive(),
+  name: nonEmptyString,
+  description: z.string(),
+  templateId: workflowTemplateIdSchema,
+  defaultInputs: z.record(z.string(), z.unknown()),
+  approvalPolicy: z.enum(["respect-template", "force-approval"]),
+  defaultBrandKitId: nonEmptyString.nullable(),
+  defaultExportPresetId: nonEmptyString.nullable(),
+  enabledOptionalSteps: z.array(nonEmptyString),
+  compatibility: z.object({
+    templateId: workflowTemplateIdSchema,
+    templateVersion: z.number().int().positive()
+  }),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+const workflowSchedulePayloadSchema = z.object({
+  id: nonEmptyString,
+  version: z.number().int().positive(),
+  name: nonEmptyString,
+  enabled: z.boolean(),
+  workflowProfileId: nonEmptyString,
+  projectPath: nonEmptyString,
+  targetResolver: z.object({
+    kind: z.enum(["use-profile-defaults", "static-clip-ids", "all-video-clips"]),
+    clipIds: z.array(nonEmptyString).optional()
+  }),
+  trigger: z.object({
+    kind: z.literal("interval"),
+    intervalMinutes: z.number().int().positive()
+  }),
+  approvalPolicy: z.enum(["respect-profile", "force-approval"]),
+  concurrencyPolicy: z.enum(["skip-if-running", "queue"]),
+  lastRunAt: z.string().datetime().nullable(),
+  nextRunAt: z.string().datetime().nullable(),
+  lastRunStatus: z
+    .union([
+      z.enum([
+        "queued",
+        "planning",
+        "running",
+        "waiting-approval",
+        "completed",
+        "failed",
+        "cancelled"
+      ]),
+      z.literal("skipped"),
+      z.literal("scheduled")
+    ])
+    .nullable(),
+  lastWorkflowRunId: z.string().nullable(),
+  lastError: z
+    .object({
+      code: nonEmptyString,
+      message: nonEmptyString,
+      details: z.string().optional()
+    })
+    .nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
 });
 const workflowStartSchema = z.object({
   directory: nonEmptyString,
@@ -472,14 +562,37 @@ const workflowApprovalSchema = z.object({
   workflowRunId: nonEmptyString,
   approvalId: nonEmptyString
 });
+const workflowProfileRunSchema = z.object({
+  directory: nonEmptyString,
+  profileId: nonEmptyString,
+  inputOverrides: z.record(z.string(), z.unknown()).optional(),
+  invocation: z
+    .object({
+      kind: z.enum(["manual", "schedule"]),
+      scheduleId: nonEmptyString.nullable().optional()
+    })
+    .optional()
+});
 const workflowTemplateQuerySchema = z.object({
   directory: nonEmptyString,
   workflowId: nonEmptyString
+});
+const workflowProfileQuerySchema = z.object({
+  directory: nonEmptyString,
+  profileId: nonEmptyString
+});
+const workflowScheduleQuerySchema = z.object({
+  directory: nonEmptyString,
+  scheduleId: nonEmptyString
 });
 const workflowArtifactQuerySchema = z.object({
   directory: nonEmptyString,
   workflowRunId: nonEmptyString,
   artifactId: nonEmptyString
+});
+const workflowCandidatePackageQuerySchema = z.object({
+  directory: nonEmptyString,
+  candidatePackageId: nonEmptyString
 });
 const brandKitCreateSchema = z.object({
   directory: nonEmptyString,
@@ -493,6 +606,37 @@ const brandKitUpdateSchema = z.object({
 const brandKitSetDefaultSchema = z.object({
   directory: nonEmptyString,
   brandKitId: nonEmptyString.nullable()
+});
+const workflowProfileCreateSchema = z.object({
+  directory: nonEmptyString,
+  profile: workflowProfilePayloadSchema
+});
+const workflowProfileUpdateSchema = z.object({
+  directory: nonEmptyString,
+  profileId: nonEmptyString,
+  profile: workflowProfilePayloadSchema
+});
+const workflowProfileDeleteSchema = z.object({
+  directory: nonEmptyString,
+  profileId: nonEmptyString
+});
+const workflowScheduleCreateSchema = z.object({
+  directory: nonEmptyString,
+  schedule: workflowSchedulePayloadSchema
+});
+const workflowScheduleUpdateSchema = z.object({
+  directory: nonEmptyString,
+  scheduleId: nonEmptyString,
+  schedule: workflowSchedulePayloadSchema
+});
+const workflowScheduleMutationSchema = z.object({
+  directory: nonEmptyString,
+  scheduleId: nonEmptyString
+});
+const workflowExportCandidateSchema = z.object({
+  directory: nonEmptyString,
+  candidatePackageId: nonEmptyString,
+  presetId: exportPresetIdSchema.nullable().optional()
 });
 const exportRequestSchema = z.object({
   timelineId: nonEmptyString,
@@ -1765,6 +1909,231 @@ const COMMAND_DEFINITIONS: CommandDefinition[] = [
   },
   {
     kind: "command",
+    name: "workflow.exportCandidatePackage",
+    category: "workflow",
+    description: "Export one workflow candidate package as a bounded media output.",
+    requiredScopes: ["export"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        candidatePackageId: stringProperty("Candidate package id."),
+        presetId: enumProperty(
+          ["video-master-1080p", "video-share-720p", "audio-podcast-aac"],
+          "Optional export preset override."
+        )
+      },
+      ["directory", "candidatePackageId"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and linked export run.",
+    parser: workflowExportCandidateSchema
+  },
+  {
+    kind: "command",
+    name: "workflowProfiles.create",
+    category: "workflow-profiles",
+    description: "Create a reusable workflow profile around a built-in workflow template.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        profile: objectProperty("Workflow profile definition.", {}, [])
+      },
+      ["directory", "profile"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and created profile id.",
+    parser: workflowProfileCreateSchema
+  },
+  {
+    kind: "command",
+    name: "workflowProfiles.update",
+    category: "workflow-profiles",
+    description: "Update a reusable workflow profile.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        profileId: stringProperty("Workflow profile id."),
+        profile: objectProperty("Workflow profile definition.", {}, [])
+      },
+      ["directory", "profileId", "profile"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and updated profile id.",
+    parser: workflowProfileUpdateSchema
+  },
+  {
+    kind: "command",
+    name: "workflowProfiles.delete",
+    category: "workflow-profiles",
+    description: "Delete a reusable workflow profile.",
+    requiredScopes: ["edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        profileId: stringProperty("Workflow profile id.")
+      },
+      ["directory", "profileId"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot after deletion.",
+    parser: workflowProfileDeleteSchema
+  },
+  {
+    kind: "command",
+    name: "workflowProfiles.run",
+    category: "workflow-profiles",
+    description: "Run a reusable workflow profile with optional input overrides.",
+    requiredScopes: ["edit"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        profileId: stringProperty("Workflow profile id."),
+        inputOverrides: objectProperty("Optional workflow input overrides.", {}, []),
+        invocation: objectProperty(
+          "Optional invocation metadata.",
+          {
+            kind: enumProperty(["manual", "schedule"], "Invocation origin."),
+            scheduleId: stringProperty("Schedule id.", { nullable: true })
+          },
+          ["kind"]
+        )
+      },
+      ["directory", "profileId"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and queued workflow run.",
+    parser: workflowProfileRunSchema
+  },
+  {
+    kind: "command",
+    name: "schedules.create",
+    category: "schedules",
+    description: "Create a local workflow schedule definition.",
+    requiredScopes: ["admin"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        schedule: objectProperty("Workflow schedule definition.", {}, [])
+      },
+      ["directory", "schedule"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and created schedule id.",
+    parser: workflowScheduleCreateSchema
+  },
+  {
+    kind: "command",
+    name: "schedules.update",
+    category: "schedules",
+    description: "Update a local workflow schedule definition.",
+    requiredScopes: ["admin"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        scheduleId: stringProperty("Workflow schedule id."),
+        schedule: objectProperty("Workflow schedule definition.", {}, [])
+      },
+      ["directory", "scheduleId", "schedule"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and updated schedule id.",
+    parser: workflowScheduleUpdateSchema
+  },
+  {
+    kind: "command",
+    name: "schedules.pause",
+    category: "schedules",
+    description: "Pause a local workflow schedule without deleting it.",
+    requiredScopes: ["admin"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        scheduleId: stringProperty("Workflow schedule id.")
+      },
+      ["directory", "scheduleId"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and paused schedule id.",
+    parser: workflowScheduleMutationSchema
+  },
+  {
+    kind: "command",
+    name: "schedules.resume",
+    category: "schedules",
+    description: "Resume a paused local workflow schedule.",
+    requiredScopes: ["admin"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        scheduleId: stringProperty("Workflow schedule id.")
+      },
+      ["directory", "scheduleId"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot and resumed schedule id.",
+    parser: workflowScheduleMutationSchema
+  },
+  {
+    kind: "command",
+    name: "schedules.delete",
+    category: "schedules",
+    description: "Delete a local workflow schedule definition.",
+    requiredScopes: ["admin"],
+    safetyClass: "high-impact",
+    mutability: "write",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        scheduleId: stringProperty("Workflow schedule id.")
+      },
+      ["directory", "scheduleId"]
+    ),
+    outputDescription: "Returns the updated workflow session snapshot after schedule deletion.",
+    parser: workflowScheduleMutationSchema
+  },
+  {
+    kind: "command",
     name: "brandKits.create",
     category: "brand-kits",
     description: "Create a reusable local brand kit for caption and export workflows.",
@@ -2533,6 +2902,129 @@ const QUERY_DEFINITIONS: QueryDefinition[] = [
   },
   {
     kind: "query",
+    name: "workflow.candidatePackages",
+    category: "workflow",
+    description: "List reviewable candidate packages derived from workflow runs.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns workflow candidate packages visible to the current project.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "workflow.candidatePackage",
+    category: "workflow",
+    description: "Inspect one workflow candidate package.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        candidatePackageId: stringProperty("Candidate package id.")
+      },
+      ["directory", "candidatePackageId"]
+    ),
+    outputDescription: "Returns one candidate package or null when it is unavailable.",
+    parser: workflowCandidatePackageQuerySchema
+  },
+  {
+    kind: "query",
+    name: "workflowProfiles.list",
+    category: "workflow-profiles",
+    description: "List reusable workflow profiles stored in local app data.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns reusable workflow profiles.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "workflowProfiles.inspect",
+    category: "workflow-profiles",
+    description: "Inspect one reusable workflow profile.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        profileId: stringProperty("Workflow profile id.")
+      },
+      ["directory", "profileId"]
+    ),
+    outputDescription: "Returns one workflow profile or null when it is unavailable.",
+    parser: workflowProfileQuerySchema
+  },
+  {
+    kind: "query",
+    name: "schedules.list",
+    category: "schedules",
+    description: "List local workflow schedules configured for the current environment.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory.")
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns local workflow schedules.",
+    parser: directorySchema
+  },
+  {
+    kind: "query",
+    name: "schedules.inspect",
+    category: "schedules",
+    description: "Inspect one local workflow schedule.",
+    requiredScopes: ["read"],
+    safetyClass: "read-only",
+    mutability: "read",
+    execution: "sync",
+    returnsJob: false,
+    longRunning: false,
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory."),
+        scheduleId: stringProperty("Workflow schedule id.")
+      },
+      ["directory", "scheduleId"]
+    ),
+    outputDescription: "Returns one workflow schedule or null when it is unavailable.",
+    parser: workflowScheduleQuerySchema
+  },
+  {
+    kind: "query",
     name: "brandKits.list",
     category: "brand-kits",
     description: "List built-in and local reusable brand kits.",
@@ -2815,6 +3307,30 @@ const OPENCLAW_TOOL_RECORDS: OpenClawToolDefinitionRecord[] = [
   createToolRecordFromOperation("clawcut.list_brand_kits", "brandKits.list", true, [
     "Read-only query."
   ]),
+  createToolRecordFromOperation("clawcut.list_workflow_profiles", "workflowProfiles.list", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.inspect_workflow_profile", "workflowProfiles.inspect", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.run_workflow_profile", "workflowProfiles.run", false, [
+    "Starts a workflow profile with reusable defaults and approval policy."
+  ]),
+  createToolRecordFromOperation("clawcut.list_schedules", "schedules.list", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.inspect_schedule", "schedules.inspect", true, [
+    "Read-only query."
+  ]),
+  createToolRecordFromOperation("clawcut.create_schedule", "schedules.create", false, [
+    "Creates a local schedule definition. Scheduled runs still respect workflow approval gates."
+  ]),
+  createToolRecordFromOperation("clawcut.pause_schedule", "schedules.pause", false, [
+    "Mutates local schedule state without bypassing existing workflow safety policy."
+  ]),
+  createToolRecordFromOperation("clawcut.resume_schedule", "schedules.resume", false, [
+    "Re-enables a paused local schedule."
+  ]),
   createToolRecordFromOperation("clawcut.start_workflow", "workflow.start", false, [
     "Starts a high-impact workflow run built from existing ClawCut commands and jobs."
   ]),
@@ -2850,6 +3366,39 @@ const OPENCLAW_TOOL_RECORDS: OpenClawToolDefinitionRecord[] = [
   ]),
   createToolRecordFromOperation("clawcut.inspect_workflow_artifact", "workflow.artifact", true, [
     "Read-only query."
+  ]),
+  createToolRecord({
+    name: "clawcut.generate_social_candidates",
+    category: "workflow",
+    description:
+      "Start the built-in social candidate packaging workflow to produce reviewable highlight candidates.",
+    operationType: "command",
+    operationName: "workflow.start",
+    requiredScopes: ["read", "edit"],
+    safetyClass: "mutating",
+    mutability: "write",
+    execution: "job",
+    returnsJob: true,
+    longRunning: true,
+    availableByDefault: false,
+    safetyNotes: [
+      "Creates suggestion and candidate-package artifacts without mutating the timeline by default."
+    ],
+    inputSchema: objectSchema(
+      {
+        directory: stringProperty("Absolute project directory to operate on."),
+        input: objectProperty(
+          "Workflow input overrides passed to the built-in social-candidate-package-v1 workflow.",
+          {},
+          []
+        )
+      },
+      ["directory"]
+    ),
+    outputDescription: "Returns the started workflow run."
+  }),
+  createToolRecordFromOperation("clawcut.export_candidate_package", "workflow.exportCandidatePackage", false, [
+    "High-impact operation. Exports a previously generated candidate package through the existing export pipeline."
   ]),
   createToolRecordFromOperation("clawcut.start_export", "export.start", false, [
     "Starts a long-running export job."
@@ -2944,6 +3493,28 @@ function createToolRecord(definition: OpenClawToolDefinition): OpenClawToolDefin
                 newTimelineEndUs: parsed.positionUs
               }
             };
+      };
+      break;
+    case "clawcut.generate_social_candidates":
+      parser = z.object({
+        directory: nonEmptyString,
+        input: z.record(z.unknown()).default({})
+      });
+      mapper = (input) => {
+        const parsed = parser.parse(input) as {
+          directory: string;
+          input: Record<string, unknown>;
+        };
+
+        return {
+          operationType: "command",
+          name: "workflow.start",
+          input: {
+            directory: parsed.directory,
+            templateId: "social-candidate-package-v1",
+            input: parsed.input
+          }
+        };
       };
       break;
     default:

@@ -295,6 +295,115 @@ describe.sequential("workflow session", () => {
     expect(editorSnapshot.document.settings.branding.defaultBrandKitId).toBe("stage9-user-kit");
   });
 
+  test("creates workflow profiles and schedules and exposes candidate packages in the session snapshot", async () => {
+    const directory = registerTempDirectory("clawcut-stage11-workflow-profiles-");
+    const userDataDirectory = registerTempDirectory("clawcut-stage11-workflow-profile-userdata-");
+    const fixturePath = resolve(process.cwd(), "fixtures/media/talking-head-sample.mp4");
+    process.env.CLAWCUT_USER_DATA_PATH = userDataDirectory;
+
+    await createProject(directory, "Stage 11 Profiles");
+    const mediaItem = await createMediaItemFromFixture("media-video", "Talking Head", fixturePath);
+    const seeded = await seedVideoTimeline(directory, mediaItem);
+
+    const createdProfile = await executeWorkflowCommand({
+      directory,
+      command: {
+        type: "CreateWorkflowProfile",
+        profile: {
+          id: "stage11-captioned-profile",
+          version: 1,
+          name: "Stage 11 Captioned Export",
+          description: "Reusable captioned export defaults.",
+          templateId: "captioned-export-v1",
+          defaultInputs: {
+            clipId: seeded.clipId,
+            exportSubtitles: true
+          },
+          approvalPolicy: "respect-template",
+          defaultBrandKitId: "clawcut-clean",
+          defaultExportPresetId: "video-share-720p",
+          enabledOptionalSteps: [],
+          compatibility: {
+            templateId: "captioned-export-v1",
+            templateVersion: 1
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    expect(createdProfile.result.ok).toBe(true);
+
+    const createdSchedule = await executeWorkflowCommand({
+      directory,
+      command: {
+        type: "CreateWorkflowSchedule",
+        schedule: {
+          id: "stage11-captioned-schedule",
+          version: 1,
+          name: "Stage 11 Schedule",
+          enabled: true,
+          workflowProfileId: "stage11-captioned-profile",
+          projectPath: directory,
+          targetResolver: {
+            kind: "static-clip-ids",
+            clipIds: [seeded.clipId]
+          },
+          trigger: {
+            kind: "interval",
+            intervalMinutes: 60
+          },
+          approvalPolicy: "respect-profile",
+          concurrencyPolicy: "skip-if-running",
+          lastRunAt: null,
+          nextRunAt: null,
+          lastRunStatus: null,
+          lastWorkflowRunId: null,
+          lastError: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    expect(createdSchedule.result.ok).toBe(true);
+
+    const socialStarted = await executeWorkflowCommand({
+      directory,
+      command: {
+        type: "StartWorkflow",
+        templateId: "social-candidate-package-v1",
+        input: {
+          clipId: seeded.clipId
+        }
+      }
+    });
+
+    expect(socialStarted.result.ok).toBe(true);
+
+    if (!socialStarted.result.ok || socialStarted.result.commandType !== "StartWorkflow") {
+      return;
+    }
+
+    const completed = await waitForWorkflowState(directory, socialStarted.result.workflowRun.id, [
+      "completed"
+    ]);
+
+    expect(
+      completed.run.artifacts.some((artifact) => artifact.kind === "candidate-package")
+    ).toBe(true);
+
+    const snapshot = await getWorkflowSessionSnapshot({ directory });
+    expect(snapshot.workflowProfiles.some((profile) => profile.id === "stage11-captioned-profile")).toBe(
+      true
+    );
+    expect(snapshot.schedules.some((schedule) => schedule.id === "stage11-captioned-schedule")).toBe(
+      true
+    );
+    expect(snapshot.candidatePackages.length).toBeGreaterThan(0);
+  });
+
   test("runs smart cleanup through approval and preserves undoability after application", async () => {
     const directory = registerTempDirectory("clawcut-stage9-smart-cleanup-");
     const fixturePath = resolve(process.cwd(), "fixtures/media/talking-head-sample.mp4");

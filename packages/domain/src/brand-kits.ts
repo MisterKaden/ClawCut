@@ -17,11 +17,20 @@ export const BRAND_KIT_FONT_FAMILY_INTENTS = ["sans", "display", "serif"] as con
 export const BRAND_KIT_FONT_SCALES = ["small", "medium", "large", "hero"] as const;
 export const BRAND_KIT_BACKGROUND_STYLES = ["none", "boxed", "card", "highlight"] as const;
 export const BRAND_KIT_SAFE_ZONE_ANCHORS = ["title-safe", "action-safe"] as const;
+export const BRAND_KIT_ASSET_KINDS = ["none", "file"] as const;
+export const BRAND_KIT_WATERMARK_POSITIONS = [
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right"
+] as const;
 
 export type BrandKitFontFamilyIntent = (typeof BRAND_KIT_FONT_FAMILY_INTENTS)[number];
 export type BrandKitFontScale = (typeof BRAND_KIT_FONT_SCALES)[number];
 export type BrandKitBackgroundStyle = (typeof BRAND_KIT_BACKGROUND_STYLES)[number];
 export type BrandKitSafeZoneAnchor = (typeof BRAND_KIT_SAFE_ZONE_ANCHORS)[number];
+export type BrandKitAssetKind = (typeof BRAND_KIT_ASSET_KINDS)[number];
+export type BrandKitWatermarkPosition = (typeof BRAND_KIT_WATERMARK_POSITIONS)[number];
 
 export interface BrandKitSafeZoneDefaults {
   anchor: BrandKitSafeZoneAnchor;
@@ -29,14 +38,28 @@ export interface BrandKitSafeZoneDefaults {
   alignment: CaptionAlignment;
 }
 
-export interface BrandKitLogoWatermark {
-  kind: "none" | "placeholder";
+export interface BrandKitResolvedAsset {
+  kind: BrandKitAssetKind;
+  absolutePath: string | null;
   label: string | null;
 }
 
-export interface BrandKitIntroOutroHooks {
-  introPreset: string | null;
-  outroPreset: string | null;
+export interface BrandKitWatermarkAsset extends BrandKitResolvedAsset {
+  kind: "none" | "file";
+  position: BrandKitWatermarkPosition;
+  marginPx: number;
+  opacity: number;
+}
+
+export interface BrandKitLayoutDefaults {
+  safeZoneAnchor: BrandKitSafeZoneAnchor;
+  placement: CaptionPlacement;
+  alignment: CaptionAlignment;
+}
+
+export interface BrandKitExportPresetBundle {
+  primaryPresetId: ExportPresetId;
+  socialPresetId: ExportPresetId | null;
 }
 
 export interface BrandKit {
@@ -48,8 +71,12 @@ export interface BrandKit {
   captionStyleOverrides: CaptionStyleOverrides;
   safeZoneDefaults: BrandKitSafeZoneDefaults;
   exportPresetId: ExportPresetId;
-  logoWatermark: BrandKitLogoWatermark;
-  introOutro: BrandKitIntroOutroHooks;
+  watermarkAsset: BrandKitWatermarkAsset;
+  introAsset: BrandKitResolvedAsset;
+  outroAsset: BrandKitResolvedAsset;
+  audioBed: BrandKitResolvedAsset;
+  layoutDefaults: BrandKitLayoutDefaults;
+  exportPresetBundle: BrandKitExportPresetBundle;
   source: "built-in" | "user";
 }
 
@@ -83,13 +110,37 @@ export const brandKitSchema = z.object({
     alignment: z.enum(CAPTION_ALIGNMENTS)
   }),
   exportPresetId: z.enum(EXPORT_PRESET_IDS),
-  logoWatermark: z.object({
-    kind: z.enum(["none", "placeholder"]),
+  watermarkAsset: z.object({
+    kind: z.enum(BRAND_KIT_ASSET_KINDS),
+    absolutePath: z.string().min(1).nullable(),
+    label: z.string().min(1).nullable(),
+    position: z.enum(BRAND_KIT_WATERMARK_POSITIONS),
+    marginPx: z.number().int().nonnegative(),
+    opacity: z.number().min(0).max(1)
+  }),
+  introAsset: z.object({
+    kind: z.enum(BRAND_KIT_ASSET_KINDS),
+    absolutePath: z.string().min(1).nullable(),
     label: z.string().min(1).nullable()
   }),
-  introOutro: z.object({
-    introPreset: z.string().min(1).nullable(),
-    outroPreset: z.string().min(1).nullable()
+  outroAsset: z.object({
+    kind: z.enum(BRAND_KIT_ASSET_KINDS),
+    absolutePath: z.string().min(1).nullable(),
+    label: z.string().min(1).nullable()
+  }),
+  audioBed: z.object({
+    kind: z.enum(BRAND_KIT_ASSET_KINDS),
+    absolutePath: z.string().min(1).nullable(),
+    label: z.string().min(1).nullable()
+  }),
+  layoutDefaults: z.object({
+    safeZoneAnchor: z.enum(BRAND_KIT_SAFE_ZONE_ANCHORS),
+    placement: z.enum(CAPTION_PLACEMENTS),
+    alignment: z.enum(CAPTION_ALIGNMENTS)
+  }),
+  exportPresetBundle: z.object({
+    primaryPresetId: z.enum(EXPORT_PRESET_IDS),
+    socialPresetId: z.enum(EXPORT_PRESET_IDS).nullable()
   }),
   source: z.enum(["built-in", "user"])
 });
@@ -123,13 +174,37 @@ const BUILT_IN_BRAND_KITS: BrandKit[] = [
       alignment: "center"
     },
     exportPresetId: "video-master-1080p",
-    logoWatermark: {
+    watermarkAsset: {
       kind: "none",
+      absolutePath: null,
+      label: null,
+      position: "top-right",
+      marginPx: 48,
+      opacity: 0.78
+    },
+    introAsset: {
+      kind: "none",
+      absolutePath: null,
       label: null
     },
-    introOutro: {
-      introPreset: null,
-      outroPreset: null
+    outroAsset: {
+      kind: "none",
+      absolutePath: null,
+      label: null
+    },
+    audioBed: {
+      kind: "none",
+      absolutePath: null,
+      label: null
+    },
+    layoutDefaults: {
+      safeZoneAnchor: "title-safe",
+      placement: "bottom-center",
+      alignment: "center"
+    },
+    exportPresetBundle: {
+      primaryPresetId: "video-master-1080p",
+      socialPresetId: "video-share-720p"
     },
     source: "built-in"
   },
@@ -156,13 +231,37 @@ const BUILT_IN_BRAND_KITS: BrandKit[] = [
       alignment: "center"
     },
     exportPresetId: "video-share-720p",
-    logoWatermark: {
-      kind: "placeholder",
-      label: "Top-right logo"
+    watermarkAsset: {
+      kind: "none",
+      absolutePath: null,
+      label: "Top-right logo",
+      position: "top-right",
+      marginPx: 40,
+      opacity: 0.9
     },
-    introOutro: {
-      introPreset: "social-intro-placeholder",
-      outroPreset: "social-outro-placeholder"
+    introAsset: {
+      kind: "none",
+      absolutePath: null,
+      label: "Social intro"
+    },
+    outroAsset: {
+      kind: "none",
+      absolutePath: null,
+      label: "Social outro"
+    },
+    audioBed: {
+      kind: "none",
+      absolutePath: null,
+      label: null
+    },
+    layoutDefaults: {
+      safeZoneAnchor: "title-safe",
+      placement: "bottom-center",
+      alignment: "center"
+    },
+    exportPresetBundle: {
+      primaryPresetId: "video-share-720p",
+      socialPresetId: "video-share-720p"
     },
     source: "built-in"
   }

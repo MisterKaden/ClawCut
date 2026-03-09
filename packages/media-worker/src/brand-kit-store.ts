@@ -1,6 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { access } from "node:fs/promises";
 
 import {
   brandKitSchema,
@@ -12,47 +10,49 @@ import {
 } from "@clawcut/domain";
 
 import { WorkerError } from "./utils";
+import { readJsonStore, writeJsonStore } from "./user-data-store";
 
-function resolveUserDataPath(): string {
-  const explicit = process.env.CLAWCUT_USER_DATA_PATH?.trim();
-
-  if (explicit) {
-    return resolve(explicit);
+async function validateAssetPath(path: string | null, label: string): Promise<void> {
+  if (!path) {
+    return;
   }
 
-  return resolve(homedir(), ".clawcut");
+  try {
+    await access(path);
+  } catch {
+    throw new WorkerError("BRAND_KIT_INVALID", `${label} could not be found at ${path}.`);
+  }
 }
 
-function resolveBrandKitsPath(): string {
-  return join(resolveUserDataPath(), "brand-kits.json");
+async function validateBrandKitAssets(brandKit: BrandKit): Promise<void> {
+  if (brandKit.watermarkAsset.kind === "file") {
+    await validateAssetPath(brandKit.watermarkAsset.absolutePath, "Brand-kit watermark asset");
+  }
+
+  if (brandKit.introAsset.kind === "file") {
+    await validateAssetPath(brandKit.introAsset.absolutePath, "Brand-kit intro asset");
+  }
+
+  if (brandKit.outroAsset.kind === "file") {
+    await validateAssetPath(brandKit.outroAsset.absolutePath, "Brand-kit outro asset");
+  }
+
+  if (brandKit.audioBed.kind === "file") {
+    await validateAssetPath(brandKit.audioBed.absolutePath, "Brand-kit audio bed");
+  }
 }
 
 async function loadUserBrandKits(): Promise<BrandKit[]> {
-  const filePath = resolveBrandKitsPath();
-
-  try {
-    const contents = await readFile(filePath, "utf8");
-    return normalizeBrandKitCollection(JSON.parse(contents)).items;
-  } catch {
-    return [];
-  }
+  return normalizeBrandKitCollection(
+    await readJsonStore("brand-kits.json", createEmptyBrandKitCollection())
+  ).items;
 }
 
 async function saveUserBrandKits(brandKits: BrandKit[]): Promise<void> {
-  const filePath = resolveBrandKitsPath();
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(
-    filePath,
-    JSON.stringify(
-      {
-        ...createEmptyBrandKitCollection(),
-        items: brandKits
-      },
-      null,
-      2
-    ),
-    "utf8"
-  );
+  await writeJsonStore("brand-kits.json", {
+    ...createEmptyBrandKitCollection(),
+    items: brandKits
+  });
 }
 
 export async function listBrandKits(): Promise<BrandKit[]> {
@@ -69,6 +69,7 @@ export async function createUserBrandKit(input: unknown): Promise<BrandKit> {
     ...candidate,
     source: "user"
   });
+  await validateBrandKitAssets(parsed);
   const existing = await loadUserBrandKits();
 
   if (existing.some((brandKit) => brandKit.id === parsed.id)) {
@@ -96,6 +97,7 @@ export async function updateUserBrandKit(brandKitId: string, input: unknown): Pr
     id: brandKitId,
     source: "user"
   });
+  await validateBrandKitAssets(parsed);
   const next = [...existing];
   next[index] = parsed;
   await saveUserBrandKits(next);

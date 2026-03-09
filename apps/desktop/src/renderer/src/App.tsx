@@ -1212,12 +1212,12 @@ export function App() {
         <div className="hero__backdrop" />
         <div className="hero__masthead">
           <div>
-            <p className="eyebrow">Clawcut / Stage 10 hardening and recovery</p>
-            <h1>Recover interrupted work, validate packaged builds, and surface machine-readable diagnostics.</h1>
+            <p className="eyebrow">Clawcut / Stage 11 workflow packaging and social automation</p>
+            <h1>Package reusable workflow profiles, schedule local runs, and turn brand-aware candidates into reviewable outputs.</h1>
             <p className="lede">
-              Stage 10 tightens Clawcut around recoverable operational runs, sequential database
-              migrations, session-linked diagnostics, and the packaged-build validation path needed
-              for trustworthy desktop and OpenClaw automation.
+              Stage 11 builds on the command engine, workflow runtime, and smart suggestions with
+              reusable profiles, local scheduling hooks, brand asset realization, and review-first
+              social candidate packaging for OpenClaw-native automation.
             </p>
           </div>
 
@@ -2072,6 +2072,51 @@ export function App() {
             "Creating brand kit…"
           )
         }
+        onCreateWorkflowProfile={(profile) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "CreateWorkflowProfile",
+              profile
+            },
+            "Creating workflow profile…"
+          )
+        }
+        onCreateWorkflowSchedule={(schedule) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "CreateWorkflowSchedule",
+              schedule
+            },
+            "Creating workflow schedule…"
+          )
+        }
+        onDeleteWorkflowProfile={(profileId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "DeleteWorkflowProfile",
+              profileId
+            },
+            "Deleting workflow profile…"
+          )
+        }
+        onDeleteWorkflowSchedule={(scheduleId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "DeleteWorkflowSchedule",
+              scheduleId
+            },
+            "Deleting workflow schedule…"
+          )
+        }
+        onExportCandidatePackage={(candidatePackageId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "ExportCandidatePackage",
+              candidatePackageId
+            },
+            "Exporting candidate package…"
+          )
+        }
         onRejectWorkflowStep={(workflowRunId, approvalId) =>
           void handleExecuteWorkflowCommand(
             {
@@ -2091,6 +2136,25 @@ export function App() {
             "Resuming workflow run…"
           )
         }
+        onResumeWorkflowSchedule={(scheduleId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "ResumeWorkflowSchedule",
+              scheduleId
+            },
+            "Resuming workflow schedule…"
+          )
+        }
+        onRunWorkflowProfile={(profileId, inputOverrides) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "RunWorkflowProfile",
+              profileId,
+              inputOverrides
+            },
+            "Starting workflow profile…"
+          )
+        }
         onRetryWorkflowStep={(workflowRunId, stepRunId) =>
           void handleExecuteWorkflowCommand(
             {
@@ -2099,6 +2163,15 @@ export function App() {
               stepRunId
             },
             "Retrying workflow step…"
+          )
+        }
+        onPauseWorkflowSchedule={(scheduleId) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "PauseWorkflowSchedule",
+              scheduleId
+            },
+            "Pausing workflow schedule…"
           )
         }
         onSetDefaultBrandKit={(brandKitId) =>
@@ -2124,6 +2197,26 @@ export function App() {
                   input
                 },
             batch ? "Starting batch workflow…" : "Starting workflow…"
+          )
+        }
+        onUpdateWorkflowProfile={(profileId, profile) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "UpdateWorkflowProfile",
+              profileId,
+              profile
+            },
+            "Updating workflow profile…"
+          )
+        }
+        onUpdateWorkflowSchedule={(scheduleId, schedule) =>
+          void handleExecuteWorkflowCommand(
+            {
+              type: "UpdateWorkflowSchedule",
+              scheduleId,
+              schedule
+            },
+            "Updating workflow schedule…"
           )
         }
         onUpdateBrandKit={(brandKitId, brandKit: BrandKit) =>

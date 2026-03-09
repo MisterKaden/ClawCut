@@ -86,8 +86,12 @@
 
 ## Brand kit scope
 
-- Brand kits currently package caption styling, safe-zone defaults, and export preset references, with logo/watermark and intro/outro hooks preserved as placeholders.
-  - Reason: this is enough to make workflows reusable now without building a full motion-graphics or asset-pack system.
+- Stage 11 extends brand kits into local export identity packs.
+  - Included today: caption styling, safe-zone defaults, export preset references, watermark asset paths, intro asset paths, and outro asset paths.
+  - Reason: workflows now need reusable, validated packaging assets without introducing a full marketplace or cloud asset system.
+
+- Projects still store only the brand kit reference and resolved style snapshots.
+  - Reason: project portability matters more than embedding machine-local asset catalogs into canonical project state.
 
 ## Workflow artifact model
 
@@ -99,8 +103,8 @@
 
 ## Batch scope
 
-- Stage 9 batch execution is single-project only.
-  - Reason: the step/run engine, approval model, and artifact model can be validated without introducing cross-project coordination complexity.
+- Stage 11 batch execution remains single-project only.
+  - Reason: the step/run engine, approval model, schedule model, and artifact model can be validated without introducing cross-project coordination complexity.
 
 - Partial batch failure is allowed and recorded.
   - Reason: one bad clip should not destroy the value of a larger batch run.
@@ -113,12 +117,18 @@
 - OpenClaw integration remains a thin adapter over Clawcut commands, queries, and workflow/session services.
   - Reason: business logic must remain app-owned.
 
-## Eventing
+## Scheduling and eventing
+
+- Clawcut now ships a lightweight local scheduler that only instantiates normal workflow-profile runs.
+  - Reason: Stage 11 needs reusable local automation hooks, but the scheduler must remain a thin trigger layer above the existing workflow engine.
+
+- Scheduled workflow steps never bypass approval boundaries.
+  - Reason: scheduled automation must preserve the same safety guarantees as direct UI or OpenClaw-triggered workflow starts.
 
 - Workflow state participates in the existing lightweight local SSE stream instead of creating a second async system.
   - Reason: job and workflow observability should share one simple local mechanism for now.
 
-## Current Stage 9 tradeoffs
+## Current Stage 11 tradeoffs
 
 - No custom workflow authoring yet.
   - Reason: built-in templates are enough to prove packaging and orchestration.
@@ -126,5 +136,5 @@
 - No multi-project batch engine yet.
   - Reason: current priority is reliable local resumability and approval-aware execution inside one project.
 
-- No internal scheduler in Clawcut.
-  - Reason: OpenClaw or future orchestrators can trigger deterministic workflow runs without Clawcut owning a full scheduler.
+- Workflow profiles and schedules are stored in app data, not in projects.
+  - Reason: they are machine-local reusable automation assets rather than canonical editing content.

@@ -145,6 +145,9 @@ importers:
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.6.2
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     optionalDependencies:
       '@resvg/resvg-js-darwin-arm64':
         specifier: ^2.6.2

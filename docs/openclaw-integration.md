@@ -76,6 +76,16 @@ Current tool coverage includes:
 - `clawcut.query_job`
 - `clawcut.list_jobs`
 - `clawcut.cancel_job`
+- `clawcut.list_workflow_profiles`
+- `clawcut.inspect_workflow_profile`
+- `clawcut.run_workflow_profile`
+- `clawcut.list_schedules`
+- `clawcut.inspect_schedule`
+- `clawcut.create_schedule`
+- `clawcut.pause_schedule`
+- `clawcut.resume_schedule`
+- `clawcut.generate_social_candidates`
+- `clawcut.export_candidate_package`
 
 Each tool carries:
 
@@ -156,6 +166,21 @@ The manifest includes:
 15. poll `clawcut.query_job`
 16. inspect `export.session` or returned export state for the final output path
 
+## Stage 11 workflow packaging
+
+OpenClaw can now work at a higher level than raw workflow template starts.
+
+Typical reusable flow:
+
+1. `clawcut.list_workflow_profiles`
+2. `clawcut.run_workflow_profile`
+3. inspect `clawcut.query_workflow_run`
+4. if needed, use `clawcut.list_pending_approvals`
+5. `clawcut.approve_workflow_step` or `clawcut.reject_workflow_step`
+6. inspect workflow artifacts, candidate packages, or exported results
+
+Local schedules remain optional and allowlist-friendly. They are intended as machine-local hooks for repeatable profile-driven automation, not as a remote scheduling system.
+
 ## Preview note
 
 Preview inspection and preview control are available to OpenClaw, but the current backend still depends on a live desktop window. Stage 7 makes this controllable and observable, not headless.
@@ -167,3 +192,4 @@ Preview inspection and preview control are available to OpenClaw, but the curren
 - event updates are lightweight SSE snapshots, not a durable workflow bus
 - smart analysis is heuristic and explainable, not a fully autonomous edit system
 - compatibility versioning is explicit, but still early-stage and local-first
+- workflow profiles and schedules are local-machine automation assets, not shared cloud workflows

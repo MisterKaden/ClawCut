@@ -15,6 +15,8 @@ interface WorkflowRunRow {
   id: string;
   job_id: string;
   project_directory: string;
+  profile_id: string | null;
+  schedule_id: string | null;
   template_id: WorkflowRun["templateId"];
   template_version: number;
   status: WorkflowRun["status"];
@@ -176,6 +178,8 @@ function getWorkflowRunRows(databasePath: string): WorkflowRunRow[] {
           id,
           job_id,
           project_directory,
+          profile_id,
+          schedule_id,
           template_id,
           template_version,
           status,
@@ -342,6 +346,8 @@ function assembleWorkflowRuns(databasePath: string): WorkflowRun[] {
       templateId: row.template_id,
       templateVersion: row.template_version,
       projectDirectory: row.project_directory,
+      profileId: row.profile_id,
+      scheduleId: row.schedule_id,
       status: row.status,
       parentJobId: row.job_id,
       input: JSON.parse(row.input_json) as WorkflowRun["input"],
@@ -408,6 +414,8 @@ export function createWorkflowRunRecord(databasePath: string, run: WorkflowRun):
           id,
           job_id,
           project_directory,
+          profile_id,
+          schedule_id,
           template_id,
           template_version,
           status,
@@ -424,6 +432,8 @@ export function createWorkflowRunRecord(databasePath: string, run: WorkflowRun):
           @id,
           @job_id,
           @project_directory,
+          @profile_id,
+          @schedule_id,
           @template_id,
           @template_version,
           @status,
@@ -443,6 +453,8 @@ export function createWorkflowRunRecord(databasePath: string, run: WorkflowRun):
         id: run.id,
         job_id: run.parentJobId,
         project_directory: run.projectDirectory,
+        profile_id: run.profileId,
+        schedule_id: run.scheduleId,
         template_id: run.templateId,
         template_version: run.templateVersion,
         status: run.status,
@@ -478,6 +490,8 @@ export function updateWorkflowRunRecord(
   const nextRun: WorkflowRun = {
     ...existing,
     status: updates.status ?? existing.status,
+    profileId: updates.profileId === undefined ? existing.profileId : updates.profileId,
+    scheduleId: updates.scheduleId === undefined ? existing.scheduleId : updates.scheduleId,
     input: updates.input ?? existing.input,
     safetyProfile: updates.safetyProfile ?? existing.safetyProfile,
     warnings: updates.warnings ?? existing.warnings,
@@ -502,6 +516,8 @@ export function updateWorkflowRunRecord(
         UPDATE workflow_runs
         SET
           status = @status,
+          profile_id = @profile_id,
+          schedule_id = @schedule_id,
           input_json = @input_json,
           safety_profile_json = @safety_profile_json,
           warnings_json = @warnings_json,
@@ -516,6 +532,8 @@ export function updateWorkflowRunRecord(
       .run({
         id: workflowRunId,
         status: nextRun.status,
+        profile_id: nextRun.profileId,
+        schedule_id: nextRun.scheduleId,
         input_json: JSON.stringify(nextRun.input),
         safety_profile_json: JSON.stringify(nextRun.safetyProfile),
         warnings_json: JSON.stringify(nextRun.warnings),

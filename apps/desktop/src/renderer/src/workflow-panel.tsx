@@ -6,7 +6,10 @@ import type {
   ExportPresetId,
   WorkflowArtifact,
   WorkflowBatchItemRun,
+  WorkflowCandidatePackage,
+  WorkflowProfile,
   WorkflowRun,
+  WorkflowSchedule,
   WorkflowTemplate
 } from "@clawcut/domain";
 import type {
@@ -35,6 +38,16 @@ interface WorkflowPanelProps {
   onCreateBrandKit: (brandKit: BrandKit) => void;
   onUpdateBrandKit: (brandKitId: string, brandKit: BrandKit) => void;
   onSetDefaultBrandKit: (brandKitId: string | null) => void;
+  onCreateWorkflowProfile: (profile: WorkflowProfile) => void;
+  onUpdateWorkflowProfile: (profileId: string, profile: WorkflowProfile) => void;
+  onDeleteWorkflowProfile: (profileId: string) => void;
+  onRunWorkflowProfile: (profileId: string, inputOverrides: Record<string, unknown>) => void;
+  onCreateWorkflowSchedule: (schedule: WorkflowSchedule) => void;
+  onUpdateWorkflowSchedule: (scheduleId: string, schedule: WorkflowSchedule) => void;
+  onPauseWorkflowSchedule: (scheduleId: string) => void;
+  onResumeWorkflowSchedule: (scheduleId: string) => void;
+  onDeleteWorkflowSchedule: (scheduleId: string) => void;
+  onExportCandidatePackage: (candidatePackageId: string) => void;
 }
 
 interface BrandKitDraft {
@@ -52,6 +65,24 @@ interface BrandKitDraft {
   accentColor: string;
   backgroundStyle: "none" | "boxed" | "card" | "highlight";
   activeWordStyle: "none" | "highlight";
+  watermarkPath: string;
+  introPath: string;
+  outroPath: string;
+}
+
+interface WorkflowProfileDraft {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface WorkflowScheduleDraft {
+  id: string;
+  name: string;
+  workflowProfileId: string;
+  intervalMinutes: number;
+  targetResolverKind: "use-profile-defaults" | "static-clip-ids" | "all-video-clips";
+  staticClipIds: string[];
 }
 
 function humanizeWorkflowStatus(status: WorkflowRun["status"]): string {
@@ -137,7 +168,10 @@ function createBrandKitDraft(
       textColor: "#F9F7F1",
       accentColor: "#F4A300",
       backgroundStyle: "none",
-      activeWordStyle: "none"
+      activeWordStyle: "none",
+      watermarkPath: "",
+      introPath: "",
+      outroPath: ""
     };
   }
 
@@ -155,7 +189,10 @@ function createBrandKitDraft(
     textColor: source.captionStyleOverrides.textColor ?? "#F9F7F1",
     accentColor: source.captionStyleOverrides.accentColor ?? "#F4A300",
     backgroundStyle: source.captionStyleOverrides.backgroundStyle ?? "none",
-    activeWordStyle: source.captionStyleOverrides.activeWordStyle ?? "none"
+    activeWordStyle: source.captionStyleOverrides.activeWordStyle ?? "none",
+    watermarkPath: source.watermarkAsset.absolutePath ?? "",
+    introPath: source.introAsset.absolutePath ?? "",
+    outroPath: source.outroAsset.absolutePath ?? ""
   };
 }
 
@@ -183,13 +220,37 @@ function toBrandKitPayload(draft: BrandKitDraft): BrandKit {
       alignment: draft.alignment
     },
     exportPresetId: draft.exportPresetId,
-    logoWatermark: {
+    watermarkAsset: {
+      kind: draft.watermarkPath ? "file" : "none",
+      absolutePath: draft.watermarkPath || null,
+      label: draft.watermarkPath ? "Watermark asset" : null,
+      position: "top-right",
+      marginPx: 40,
+      opacity: 0.85
+    },
+    introAsset: {
+      kind: draft.introPath ? "file" : "none",
+      absolutePath: draft.introPath || null,
+      label: draft.introPath ? "Intro asset" : null
+    },
+    outroAsset: {
+      kind: draft.outroPath ? "file" : "none",
+      absolutePath: draft.outroPath || null,
+      label: draft.outroPath ? "Outro asset" : null
+    },
+    audioBed: {
       kind: "none",
+      absolutePath: null,
       label: null
     },
-    introOutro: {
-      introPreset: null,
-      outroPreset: null
+    layoutDefaults: {
+      safeZoneAnchor: "title-safe",
+      placement: draft.placement,
+      alignment: draft.alignment
+    },
+    exportPresetBundle: {
+      primaryPresetId: draft.exportPresetId,
+      socialPresetId: "video-share-720p"
     },
     source: "user"
   };
@@ -241,6 +302,91 @@ function formatArtifact(artifact: WorkflowArtifact): string {
   return artifact.path ?? JSON.stringify(artifact.metadata);
 }
 
+function createWorkflowProfileDraft(profile: WorkflowProfile | null): WorkflowProfileDraft {
+  return {
+    id: profile?.id ?? "",
+    name: profile?.name ?? "",
+    description: profile?.description ?? ""
+  };
+}
+
+function createWorkflowScheduleDraft(
+  schedule: WorkflowSchedule | null,
+  workflowProfileId: string,
+  selectedClipId: string | null
+): WorkflowScheduleDraft {
+  return {
+    id: schedule?.id ?? "",
+    name: schedule?.name ?? "",
+    workflowProfileId: schedule?.workflowProfileId ?? workflowProfileId,
+    intervalMinutes: schedule?.trigger.intervalMinutes ?? 60,
+    targetResolverKind: schedule?.targetResolver.kind ?? (selectedClipId ? "static-clip-ids" : "use-profile-defaults"),
+    staticClipIds: schedule?.targetResolver.clipIds ?? (selectedClipId ? [selectedClipId] : [])
+  };
+}
+
+function createWorkflowProfilePayload(
+  draft: WorkflowProfileDraft,
+  templateId: WorkflowTemplate["id"],
+  defaultInputs: Record<string, unknown>,
+  brandKitId: string | null,
+  exportPresetId: string | null
+): WorkflowProfile {
+  const timestamp = new Date().toISOString();
+
+  return {
+    id: draft.id,
+    version: 1,
+    name: draft.name,
+    description: draft.description,
+    templateId,
+    defaultInputs,
+    approvalPolicy: "respect-template",
+    defaultBrandKitId: brandKitId,
+    defaultExportPresetId: exportPresetId,
+    enabledOptionalSteps: [],
+    compatibility: {
+      templateId,
+      templateVersion: 1
+    },
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
+function createWorkflowSchedulePayload(
+  draft: WorkflowScheduleDraft,
+  projectPath: string
+): WorkflowSchedule {
+  const timestamp = new Date().toISOString();
+
+  return {
+    id: draft.id,
+    version: 1,
+    name: draft.name,
+    enabled: true,
+    workflowProfileId: draft.workflowProfileId,
+    projectPath,
+    targetResolver: {
+      kind: draft.targetResolverKind,
+      clipIds: draft.targetResolverKind === "static-clip-ids" ? draft.staticClipIds : undefined
+    },
+    trigger: {
+      kind: "interval",
+      intervalMinutes: draft.intervalMinutes
+    },
+    approvalPolicy: "respect-profile",
+    concurrencyPolicy: "skip-if-running",
+    lastRunAt: null,
+    nextRunAt: null,
+    lastRunStatus: null,
+    lastWorkflowRunId: null,
+    lastError: null,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
 export function WorkflowPanel({
   snapshot,
   captionSnapshot,
@@ -255,12 +401,24 @@ export function WorkflowPanel({
   onRejectWorkflowStep,
   onCreateBrandKit,
   onUpdateBrandKit,
-  onSetDefaultBrandKit
+  onSetDefaultBrandKit,
+  onCreateWorkflowProfile,
+  onUpdateWorkflowProfile,
+  onDeleteWorkflowProfile,
+  onRunWorkflowProfile,
+  onCreateWorkflowSchedule,
+  onUpdateWorkflowSchedule,
+  onPauseWorkflowSchedule,
+  onResumeWorkflowSchedule,
+  onDeleteWorkflowSchedule,
+  onExportCandidatePackage
 }: WorkflowPanelProps) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<WorkflowTemplate["id"] | null>(null);
   const [draftInput, setDraftInput] = useState<Record<string, unknown>>({});
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedBrandKitId, setSelectedBrandKitId] = useState<string | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
 
   const workflows = useMemo(() => workflowSnapshot?.workflows ?? [], [workflowSnapshot]);
   const selectedWorkflow =
@@ -273,8 +431,23 @@ export function WorkflowPanel({
     workflowSnapshot?.brandKits.find((brandKit) => brandKit.id === selectedBrandKitId) ??
     workflowSnapshot?.brandKits[0] ??
     null;
+  const selectedProfile =
+    workflowSnapshot?.workflowProfiles.find((profile) => profile.id === selectedProfileId) ??
+    workflowSnapshot?.workflowProfiles[0] ??
+    null;
+  const selectedSchedule =
+    workflowSnapshot?.schedules.find((schedule) => schedule.id === selectedScheduleId) ??
+    workflowSnapshot?.schedules[0] ??
+    null;
+  const candidatePackages = workflowSnapshot?.candidatePackages ?? [];
   const [brandKitDraft, setBrandKitDraft] = useState<BrandKitDraft>(() =>
     createBrandKitDraft(null, "bottom-center-clean", "video-master-1080p")
+  );
+  const [profileDraft, setProfileDraft] = useState<WorkflowProfileDraft>(() =>
+    createWorkflowProfileDraft(null)
+  );
+  const [scheduleDraft, setScheduleDraft] = useState<WorkflowScheduleDraft>(() =>
+    createWorkflowScheduleDraft(null, "", null)
   );
 
   useEffect(() => {
@@ -294,6 +467,18 @@ export function WorkflowPanel({
       setSelectedBrandKitId(workflowSnapshot.brandKits[0].id);
     }
   }, [selectedBrandKitId, workflowSnapshot]);
+
+  useEffect(() => {
+    if (!selectedProfileId && workflowSnapshot?.workflowProfiles[0]) {
+      setSelectedProfileId(workflowSnapshot.workflowProfiles[0].id);
+    }
+  }, [selectedProfileId, workflowSnapshot]);
+
+  useEffect(() => {
+    if (!selectedScheduleId && workflowSnapshot?.schedules[0]) {
+      setSelectedScheduleId(workflowSnapshot.schedules[0].id);
+    }
+  }, [selectedScheduleId, workflowSnapshot]);
 
   useEffect(() => {
     setDraftInput(
@@ -316,6 +501,16 @@ export function WorkflowPanel({
       )
     );
   }, [captionSnapshot, exportSnapshot, selectedBrandKit]);
+
+  useEffect(() => {
+    setProfileDraft(createWorkflowProfileDraft(selectedProfile));
+  }, [selectedProfile]);
+
+  useEffect(() => {
+    setScheduleDraft(
+      createWorkflowScheduleDraft(selectedSchedule, selectedProfile?.id ?? "", selectedClipId)
+    );
+  }, [selectedClipId, selectedProfile, selectedSchedule]);
 
   const clipOptions = useMemo(
     () =>
@@ -879,6 +1074,45 @@ export function WorkflowPanel({
                   value={brandKitDraft.accentColor}
                 />
               </label>
+              <label className="field workflow-field workflow-field--wide">
+                <span>Watermark asset path</span>
+                <input
+                  onChange={(event) =>
+                    setBrandKitDraft((current) => ({
+                      ...current,
+                      watermarkPath: event.target.value
+                    }))
+                  }
+                  type="text"
+                  value={brandKitDraft.watermarkPath}
+                />
+              </label>
+              <label className="field workflow-field workflow-field--wide">
+                <span>Intro asset path</span>
+                <input
+                  onChange={(event) =>
+                    setBrandKitDraft((current) => ({
+                      ...current,
+                      introPath: event.target.value
+                    }))
+                  }
+                  type="text"
+                  value={brandKitDraft.introPath}
+                />
+              </label>
+              <label className="field workflow-field workflow-field--wide">
+                <span>Outro asset path</span>
+                <input
+                  onChange={(event) =>
+                    setBrandKitDraft((current) => ({
+                      ...current,
+                      outroPath: event.target.value
+                    }))
+                  }
+                  type="text"
+                  value={brandKitDraft.outroPath}
+                />
+              </label>
             </div>
 
             <div className="button-row">
@@ -902,6 +1136,366 @@ export function WorkflowPanel({
                 Update selected brand kit
               </button>
             </div>
+          </section>
+
+          <section className="workflow-surface">
+            <div className="workflow-surface__header">
+              <div>
+                <span className="meta-label">Workflow profiles</span>
+                <strong>{workflowSnapshot?.workflowProfiles.length ?? 0} reusable profiles</strong>
+              </div>
+            </div>
+
+            <label className="field field--compact">
+              <span>Selected profile</span>
+              <select
+                onChange={(event) => setSelectedProfileId(event.target.value)}
+                value={selectedProfile?.id ?? ""}
+              >
+                {(workflowSnapshot?.workflowProfiles ?? []).map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="workflow-input-grid">
+              <label className="field workflow-field">
+                <span>Profile id</span>
+                <input
+                  onChange={(event) =>
+                    setProfileDraft((current) => ({
+                      ...current,
+                      id: slugify(event.target.value)
+                    }))
+                  }
+                  type="text"
+                  value={profileDraft.id}
+                />
+              </label>
+              <label className="field workflow-field">
+                <span>Name</span>
+                <input
+                  onChange={(event) =>
+                    setProfileDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                      id: current.id || slugify(event.target.value)
+                    }))
+                  }
+                  type="text"
+                  value={profileDraft.name}
+                />
+              </label>
+              <label className="field workflow-field workflow-field--wide">
+                <span>Description</span>
+                <input
+                  onChange={(event) =>
+                    setProfileDraft((current) => ({
+                      ...current,
+                      description: event.target.value
+                    }))
+                  }
+                  type="text"
+                  value={profileDraft.description}
+                />
+              </label>
+            </div>
+
+            <div className="button-row">
+              <button
+                className="secondary-button"
+                disabled={!selectedWorkflow || !profileDraft.id || !profileDraft.name}
+                onClick={() =>
+                  selectedWorkflow &&
+                  onCreateWorkflowProfile(
+                    createWorkflowProfilePayload(
+                      profileDraft,
+                      selectedWorkflow.id,
+                      draftInput,
+                      typeof draftInput.brandKitId === "string" && draftInput.brandKitId
+                        ? (draftInput.brandKitId as string)
+                        : null,
+                      typeof draftInput.exportPresetId === "string" && draftInput.exportPresetId
+                        ? (draftInput.exportPresetId as ExportPresetId)
+                        : null
+                    )
+                  )
+                }
+                type="button"
+              >
+                Save current workflow as profile
+              </button>
+              <button
+                className="primary-button"
+                disabled={!selectedWorkflow || !selectedProfile}
+                onClick={() =>
+                  selectedWorkflow &&
+                  selectedProfile &&
+                  onUpdateWorkflowProfile(
+                    selectedProfile.id,
+                    createWorkflowProfilePayload(
+                      profileDraft,
+                      selectedWorkflow.id,
+                      draftInput,
+                      typeof draftInput.brandKitId === "string" && draftInput.brandKitId
+                        ? (draftInput.brandKitId as string)
+                        : null,
+                      typeof draftInput.exportPresetId === "string" && draftInput.exportPresetId
+                        ? (draftInput.exportPresetId as ExportPresetId)
+                        : null
+                    )
+                  )
+                }
+                type="button"
+              >
+                Update selected profile
+              </button>
+              <button
+                className="secondary-button"
+                disabled={!selectedProfile}
+                onClick={() => selectedProfile && onRunWorkflowProfile(selectedProfile.id, {})}
+                type="button"
+              >
+                Run selected profile
+              </button>
+              <button
+                className="secondary-button"
+                disabled={!selectedProfile}
+                onClick={() => selectedProfile && onDeleteWorkflowProfile(selectedProfile.id)}
+                type="button"
+              >
+                Delete profile
+              </button>
+            </div>
+          </section>
+
+          <section className="workflow-surface">
+            <div className="workflow-surface__header">
+              <div>
+                <span className="meta-label">Schedules</span>
+                <strong>{workflowSnapshot?.schedules.length ?? 0} local schedules</strong>
+              </div>
+            </div>
+
+            <label className="field field--compact">
+              <span>Selected schedule</span>
+              <select
+                onChange={(event) => setSelectedScheduleId(event.target.value)}
+                value={selectedSchedule?.id ?? ""}
+              >
+                {(workflowSnapshot?.schedules ?? []).map((schedule) => (
+                  <option key={schedule.id} value={schedule.id}>
+                    {schedule.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="workflow-input-grid">
+              <label className="field workflow-field">
+                <span>Schedule id</span>
+                <input
+                  onChange={(event) =>
+                    setScheduleDraft((current) => ({
+                      ...current,
+                      id: slugify(event.target.value)
+                    }))
+                  }
+                  type="text"
+                  value={scheduleDraft.id}
+                />
+              </label>
+              <label className="field workflow-field">
+                <span>Name</span>
+                <input
+                  onChange={(event) =>
+                    setScheduleDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                      id: current.id || slugify(event.target.value)
+                    }))
+                  }
+                  type="text"
+                  value={scheduleDraft.name}
+                />
+              </label>
+              <label className="field workflow-field">
+                <span>Profile</span>
+                <select
+                  onChange={(event) =>
+                    setScheduleDraft((current) => ({
+                      ...current,
+                      workflowProfileId: event.target.value
+                    }))
+                  }
+                  value={scheduleDraft.workflowProfileId}
+                >
+                  <option value="">Select a profile</option>
+                  {(workflowSnapshot?.workflowProfiles ?? []).map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field workflow-field">
+                <span>Interval minutes</span>
+                <input
+                  min={5}
+                  onChange={(event) =>
+                    setScheduleDraft((current) => ({
+                      ...current,
+                      intervalMinutes: Number(event.target.value) || 60
+                    }))
+                  }
+                  type="number"
+                  value={scheduleDraft.intervalMinutes}
+                />
+              </label>
+              <label className="field workflow-field">
+                <span>Target resolver</span>
+                <select
+                  onChange={(event) =>
+                    setScheduleDraft((current) => ({
+                      ...current,
+                      targetResolverKind: event.target.value as WorkflowScheduleDraft["targetResolverKind"]
+                    }))
+                  }
+                  value={scheduleDraft.targetResolverKind}
+                >
+                  <option value="use-profile-defaults">Use profile defaults</option>
+                  <option value="static-clip-ids">Static clip ids</option>
+                  <option value="all-video-clips">All video clips</option>
+                </select>
+              </label>
+              {scheduleDraft.targetResolverKind === "static-clip-ids" ? (
+                <label className="field workflow-field workflow-field--wide">
+                  <span>Static clip ids (comma separated)</span>
+                  <input
+                    onChange={(event) =>
+                      setScheduleDraft((current) => ({
+                        ...current,
+                        staticClipIds: event.target.value
+                          .split(",")
+                          .map((value) => value.trim())
+                          .filter(Boolean)
+                      }))
+                    }
+                    type="text"
+                    value={scheduleDraft.staticClipIds.join(", ")}
+                  />
+                </label>
+              ) : null}
+            </div>
+
+            <div className="button-row">
+              <button
+                className="secondary-button"
+                disabled={!snapshot || !scheduleDraft.id || !scheduleDraft.name || !scheduleDraft.workflowProfileId}
+                onClick={() =>
+                  snapshot &&
+                  onCreateWorkflowSchedule(
+                    createWorkflowSchedulePayload(scheduleDraft, snapshot.directory)
+                  )
+                }
+                type="button"
+              >
+                Create schedule
+              </button>
+              <button
+                className="primary-button"
+                disabled={!snapshot || !selectedSchedule}
+                onClick={() =>
+                  snapshot &&
+                  selectedSchedule &&
+                  onUpdateWorkflowSchedule(
+                    selectedSchedule.id,
+                    createWorkflowSchedulePayload(scheduleDraft, snapshot.directory)
+                  )
+                }
+                type="button"
+              >
+                Update selected schedule
+              </button>
+              <button
+                className="secondary-button"
+                disabled={!selectedSchedule || !selectedSchedule.enabled}
+                onClick={() => selectedSchedule && onPauseWorkflowSchedule(selectedSchedule.id)}
+                type="button"
+              >
+                Pause
+              </button>
+              <button
+                className="secondary-button"
+                disabled={!selectedSchedule || selectedSchedule.enabled}
+                onClick={() => selectedSchedule && onResumeWorkflowSchedule(selectedSchedule.id)}
+                type="button"
+              >
+                Resume
+              </button>
+              <button
+                className="secondary-button"
+                disabled={!selectedSchedule}
+                onClick={() => selectedSchedule && onDeleteWorkflowSchedule(selectedSchedule.id)}
+                type="button"
+              >
+                Delete
+              </button>
+            </div>
+
+            {(workflowSnapshot?.schedules ?? []).length ? (
+              <div className="workflow-artifact-list">
+                {(workflowSnapshot?.schedules ?? []).map((schedule) => (
+                  <div className="workflow-artifact-row" key={schedule.id}>
+                    <strong>{schedule.name}</strong>
+                    <span>
+                      {schedule.enabled ? "Enabled" : "Paused"} · next {schedule.nextRunAt ?? "not scheduled"} · last{" "}
+                      {schedule.lastRunStatus ?? "never"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-inline">No local schedules configured yet.</div>
+            )}
+          </section>
+
+          <section className="workflow-surface">
+            <div className="workflow-surface__header">
+              <div>
+                <span className="meta-label">Candidate packages</span>
+                <strong>{candidatePackages.length} reviewable candidates</strong>
+              </div>
+            </div>
+
+            {candidatePackages.length ? (
+              <div className="workflow-artifact-list">
+                {candidatePackages.map((candidate: WorkflowCandidatePackage) => (
+                  <div className="workflow-artifact-row" key={candidate.id}>
+                    <div>
+                      <strong>{candidate.title}</strong>
+                      <span>
+                        {candidate.label} · {(candidate.startUs / 1_000_000).toFixed(2)}s to{" "}
+                        {(candidate.endUs / 1_000_000).toFixed(2)}s
+                      </span>
+                    </div>
+                    <button
+                      className="secondary-button secondary-button--small"
+                      onClick={() => onExportCandidatePackage(candidate.id)}
+                      type="button"
+                    >
+                      Export candidate
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-inline">
+                Social candidate workflows will list reviewable packages here before export.
+              </div>
+            )}
           </section>
         </aside>
       </div>

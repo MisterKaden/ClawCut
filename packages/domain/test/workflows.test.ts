@@ -29,6 +29,12 @@ describe("workflow and brand-kit domain primitives", () => {
     expect(
       templates.find((template) => template.id === "short-clip-candidates-v1")?.expectedOutputs
     ).toContain("snapshot");
+    expect(
+      templates.find((template) => template.id === "social-candidate-package-v1")?.expectedOutputs
+    ).toContain("candidate-package");
+    expect(
+      templates.find((template) => template.id === "transcript-range-package-v1")?.expectedOutputs
+    ).toContain("transcript-range-selection");
   });
 
   test("resolves built-in brand kits and applies style overrides to caption tracks", () => {
@@ -86,5 +92,7 @@ describe("workflow and brand-kit domain primitives", () => {
     expect(styledTrack.templateId).toBe("social-highlight");
     expect(styledTrack.segments[0]?.activeWordHighlight).toBe(true);
     expect(styledTrack.segments[0]?.placement).toBe("bottom-center");
+    expect(brandKit.watermarkAsset.kind).toBe("none");
+    expect(brandKit.exportPresetBundle.primaryPresetId).toBeTruthy();
   });
 });

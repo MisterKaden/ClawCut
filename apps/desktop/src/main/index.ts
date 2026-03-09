@@ -7,12 +7,14 @@ import { createMediaWorkerHost } from "@clawcut/media-worker";
 import { registerIpcHandlers } from "./ipc";
 import { LocalApiController } from "./local-api";
 import { createPreviewBridge } from "./preview-bridge";
+import { createWorkflowScheduler } from "./workflow-scheduler";
 import { createMainWindow } from "./window";
 
 electron.app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 let mainWindow: electron.BrowserWindow | null = null;
 let localApiController: LocalApiController | null = null;
 let mediaWorkerHost: ReturnType<typeof createMediaWorkerHost> | null = null;
+let workflowScheduler: ReturnType<typeof createWorkflowScheduler> | null = null;
 
 async function createSessionLogDirectory(userDataPath: string): Promise<string> {
   const sessionId = `${new Date().toISOString().replace(/[:.]/gu, "-")}-${process.pid}`;
@@ -32,7 +34,9 @@ function resolveCurrentWindow(): electron.BrowserWindow | null {
 async function bootstrap(): Promise<void> {
   const { app, BrowserWindow } = electron;
   await app.whenReady();
-  const userDataPath = app.getPath("userData");
+  const explicitUserDataPath = process.env.CLAWCUT_USER_DATA_PATH?.trim();
+  const userDataPath = explicitUserDataPath || app.getPath("userData");
+  process.env.CLAWCUT_USER_DATA_PATH = userDataPath;
   const workspaceRoot = app.isPackaged
     ? app.getAppPath()
     : process.env.CLAWCUT_WORKSPACE_ROOT ?? process.cwd();
@@ -49,6 +53,10 @@ async function bootstrap(): Promise<void> {
     preview: createPreviewBridge(resolveCurrentWindow)
   });
   await localApiController.initialize();
+  workflowScheduler = createWorkflowScheduler({
+    worker: mediaWorkerHost
+  });
+  workflowScheduler.start();
   registerIpcHandlers({
     async detectToolchain() {
       return mediaWorkerHost!.detectToolchain();
@@ -168,6 +176,7 @@ void bootstrap();
 
 electron.app.on("window-all-closed", async () => {
   if (process.platform !== "darwin") {
+    workflowScheduler?.stop();
     await localApiController?.dispose();
     await mediaWorkerHost?.dispose();
     electron.app.quit();
@@ -175,6 +184,7 @@ electron.app.on("window-all-closed", async () => {
 });
 
 electron.app.on("before-quit", async () => {
+  workflowScheduler?.stop();
   await localApiController?.dispose();
   await mediaWorkerHost?.dispose();
 });

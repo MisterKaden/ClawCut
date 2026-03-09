@@ -9,4 +9,6 @@ export * from "./smart-session";
 export * from "./toolchain";
 export * from "./transcription-adapter";
 export * from "./types";
+export * from "./workflow-profile-store";
+export * from "./workflow-schedule-store";
 export * from "./workflow-session";

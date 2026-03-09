@@ -166,12 +166,46 @@ Current Stage 10 notes:
 - the packaged worker still uses the local Node runtime in the validated path
 - undo/redo remains session-scoped; Stage 10 does not add full UI session restore
 
-## Stage 11: Beast mode
+## Stage 11: Workflow profiles, scheduling, and social packaging
+
+Status: complete
+
+Acceptance criteria:
+
+- reusable workflow profiles exist and are machine-readable
+- local schedules can start workflow-profile runs without bypassing approvals
+- brand kits can package watermark and intro/outro assets through structured export hooks
+- transcript-range and social candidate packaging workflows exist
+- workflow/profile/schedule OpenClaw tools exist
+- batch packaging remains reviewable and project-scoped
+- docs, tests, and smoke cover the shipped flow
+
+Delivered:
+
+- reusable `WorkflowProfile` records stored in app data
+- reusable `WorkflowSchedule` records and a lightweight main-process scheduler
+- extended brand kits with watermark, intro, and outro asset references
+- structured export `brandPackaging` flow through render plan and worker execution
+- built-in workflows:
+  - `social-candidate-package-v1`
+  - `transcript-range-package-v1`
+- candidate-package artifact generation and export
+- OpenClaw/profile/schedule tool coverage and SSE workflow updates
+- Stage 11 desktop workflow/profile/schedule UI
+
+Current Stage 11 notes:
+
+- workflow authoring is still built-in/profile-based only
+- scheduling is local-only and intentionally lightweight
+- batch scope remains one project at a time
+- brand assets are validated local paths, not shared cloud assets
+
+## Stage 12: Beast mode
 
 Planned acceptance criteria:
 
-- richer transcript-based editing
-- stronger brand-kit assets and intro/outro handling
-- smarter candidate packaging for shorts/social
-- larger-scale automation and scheduling hooks
-- extension surfaces for future reusable workflow libraries
+- stronger packaged-runtime independence
+- deeper audit/history and automation observability
+- broader scale/performance work for workflow-heavy local automation
+- richer review tooling for candidate packages and branded outputs
+- safer cross-project orchestration foundations where justified

@@ -195,6 +195,8 @@ describe("diagnostics recovery", () => {
       templateId: "smart-cleanup-v1",
       templateVersion: 1,
       projectDirectory: directory,
+      profileId: null,
+      scheduleId: null,
       status: "running",
       parentJobId: workflowJobId,
       input: {},

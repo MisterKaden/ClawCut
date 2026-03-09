@@ -2,6 +2,7 @@ import type { MediaItem } from "./media";
 import {
   DEFAULT_EXPORT_PRESET_ID,
   resolveExportPreset,
+  type ExportBrandPackaging,
   type ExportCommandError,
   type ExportMode,
   type ExportPreset,
@@ -29,6 +30,34 @@ const DEFAULT_GAP_BEHAVIOR = {
   video: "black",
   audio: "silence"
 } as const;
+
+function normalizeBrandPackaging(
+  input: ExportRequestInput["brandPackaging"]
+): ExportBrandPackaging {
+  return {
+    introAsset: input?.introAsset
+      ? {
+          absolutePath: input.introAsset.absolutePath,
+          label: input.introAsset.label ?? null
+        }
+      : null,
+    outroAsset: input?.outroAsset
+      ? {
+          absolutePath: input.outroAsset.absolutePath,
+          label: input.outroAsset.label ?? null
+        }
+      : null,
+    watermarkAsset: input?.watermarkAsset
+      ? {
+          absolutePath: input.watermarkAsset.absolutePath,
+          label: input.watermarkAsset.label ?? null,
+          position: input.watermarkAsset.position,
+          marginPx: input.watermarkAsset.marginPx,
+          opacity: input.watermarkAsset.opacity
+        }
+      : null
+  };
+}
 
 interface TimelineTrackWithIndex {
   track: TimelineTrack;
@@ -165,6 +194,7 @@ function resolveExportTarget(
         presetId: DEFAULT_EXPORT_PRESET_ID,
         outputPath: null,
         overwritePolicy: "increment",
+        brandPackaging: normalizeBrandPackaging(null),
         captionBurnIn: {
           enabled: false,
           captionTrackId: null,
@@ -201,6 +231,7 @@ function resolveExportTarget(
         presetId: DEFAULT_EXPORT_PRESET_ID,
         outputPath: null,
         overwritePolicy: "increment",
+        brandPackaging: normalizeBrandPackaging(null),
         captionBurnIn: {
           enabled: false,
           captionTrackId: null,
@@ -244,6 +275,7 @@ function resolveExportTarget(
         presetId: DEFAULT_EXPORT_PRESET_ID,
         outputPath: null,
         overwritePolicy: "increment",
+        brandPackaging: normalizeBrandPackaging(null),
         captionBurnIn: {
           enabled: false,
           captionTrackId: null,
@@ -306,19 +338,20 @@ export function createExportRequest(
   return {
     ok: true,
     preset,
-      request: {
-        timelineId: timeline.id,
-        exportMode,
-        presetId: preset.id,
-        outputPath: input.outputPath ?? null,
-        overwritePolicy: input.overwritePolicy ?? "increment",
-        captionBurnIn: {
-          enabled: input.captionBurnIn?.enabled ?? false,
-          captionTrackId: input.captionBurnIn?.captionTrackId ?? null,
-          subtitleFormat: input.captionBurnIn?.subtitleFormat ?? "ass"
-        },
-        target: targetResult.request.target
-      }
+    request: {
+      timelineId: timeline.id,
+      exportMode,
+      presetId: preset.id,
+      outputPath: input.outputPath ?? null,
+      overwritePolicy: input.overwritePolicy ?? "increment",
+      brandPackaging: normalizeBrandPackaging(input.brandPackaging),
+      captionBurnIn: {
+        enabled: input.captionBurnIn?.enabled ?? false,
+        captionTrackId: input.captionBurnIn?.captionTrackId ?? null,
+        subtitleFormat: input.captionBurnIn?.subtitleFormat ?? "ass"
+      },
+      target: targetResult.request.target
+    }
   };
 }
 
@@ -573,6 +606,7 @@ export function compileRenderPlan(
       gapBehavior: DEFAULT_GAP_BEHAVIOR,
       hasVideoOutput: request.exportMode === "video",
       hasAudioOutput,
+      brandPackaging: request.brandPackaging,
       captionBurnIn:
         request.captionBurnIn.enabled && request.captionBurnIn.captionTrackId
           ? {

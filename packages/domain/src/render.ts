@@ -47,6 +47,35 @@ export interface ExportAudioSettings {
   bitrateKbps: number;
 }
 
+export type ExportWatermarkPosition =
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
+
+export interface ExportBrandingAssetRef {
+  absolutePath: string;
+  label: string | null;
+}
+
+export interface ExportBrandingWatermarkRef extends ExportBrandingAssetRef {
+  position: ExportWatermarkPosition;
+  marginPx: number;
+  opacity: number;
+}
+
+export interface ExportBrandPackagingInput {
+  introAsset?: ExportBrandingAssetRef | null;
+  outroAsset?: ExportBrandingAssetRef | null;
+  watermarkAsset?: ExportBrandingWatermarkRef | null;
+}
+
+export interface ExportBrandPackaging {
+  introAsset: ExportBrandingAssetRef | null;
+  outroAsset: ExportBrandingAssetRef | null;
+  watermarkAsset: ExportBrandingWatermarkRef | null;
+}
+
 export interface ExportPreset {
   id: ExportPresetId;
   name: string;
@@ -131,6 +160,7 @@ export interface ExportRequestInput {
   presetId?: ExportPresetId;
   outputPath?: string | null;
   overwritePolicy?: ExportOverwritePolicy;
+  brandPackaging?: ExportBrandPackagingInput | null;
   captionBurnIn?: {
     enabled: boolean;
     captionTrackId: string | null;
@@ -182,6 +212,7 @@ export interface ExportRequest {
   presetId: ExportPresetId;
   outputPath: string | null;
   overwritePolicy: ExportOverwritePolicy;
+  brandPackaging: ExportBrandPackaging;
   captionBurnIn: {
     enabled: boolean;
     captionTrackId: string | null;
@@ -241,6 +272,7 @@ export interface RenderPlan {
   gapBehavior: RenderGapBehavior;
   hasVideoOutput: boolean;
   hasAudioOutput: boolean;
+  brandPackaging: ExportBrandPackaging;
   captionBurnIn:
     | {
         captionTrackId: string;

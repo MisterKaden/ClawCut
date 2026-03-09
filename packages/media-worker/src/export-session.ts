@@ -216,6 +216,29 @@ interface ExportDevelopmentManifest {
     outputPath: string;
     args: string[];
   } | null;
+  brandSteps: {
+    introTranscode: Array<{
+      sourcePath: string;
+      outputPath: string;
+      args: string[];
+    }>;
+    outroTranscode: Array<{
+      sourcePath: string;
+      outputPath: string;
+      args: string[];
+    }>;
+    watermarkStep: {
+      sourcePath: string;
+      watermarkPath: string;
+      outputPath: string;
+      args: string[];
+    } | null;
+    packagingConcatStep: {
+      concatListPath: string;
+      outputPath: string;
+      args: string[];
+    } | null;
+  };
 }
 
 interface ExportSnapshotManifest {
@@ -656,6 +679,116 @@ function createConcatArgs(concatListPath: string, outputPath: string): string[] 
   ];
 }
 
+function createBrandAssetTranscodeArgs(
+  sourcePath: string,
+  outputPath: string,
+  renderPlan: RenderPlan
+): string[] {
+  const args = ["-y", "-i", sourcePath];
+
+  if (renderPlan.preset.video) {
+    args.push(
+      "-vf",
+      `scale=${renderPlan.preset.video.width}:${renderPlan.preset.video.height}:force_original_aspect_ratio=decrease,pad=${renderPlan.preset.video.width}:${renderPlan.preset.video.height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
+      "-map",
+      "0:v:0",
+      "-c:v",
+      renderPlan.preset.video.codec,
+      "-pix_fmt",
+      renderPlan.preset.video.pixelFormat,
+      "-r",
+      String(renderPlan.preset.video.frameRate),
+      "-b:v",
+      `${renderPlan.preset.video.bitrateKbps}k`
+    );
+  }
+
+  if (renderPlan.hasAudioOutput && renderPlan.preset.audio) {
+    args.push(
+      "-map",
+      "0:a?",
+      "-c:a",
+      renderPlan.preset.audio.codec,
+      "-ar",
+      String(renderPlan.preset.audio.sampleRate),
+      "-ac",
+      String(renderPlan.preset.audio.channelCount),
+      "-b:a",
+      `${renderPlan.preset.audio.bitrateKbps}k`
+    );
+  }
+
+  args.push("-movflags", "+faststart", "-progress", "pipe:1", "-nostats", outputPath);
+  return args;
+}
+
+function resolveWatermarkCoordinates(
+  position: NonNullable<RenderPlan["brandPackaging"]["watermarkAsset"]>["position"],
+  marginPx: number
+): string {
+  switch (position) {
+    case "top-left":
+      return `${marginPx}:${marginPx}`;
+    case "top-right":
+      return `W-w-${marginPx}:${marginPx}`;
+    case "bottom-left":
+      return `${marginPx}:H-h-${marginPx}`;
+    case "bottom-right":
+      return `W-w-${marginPx}:H-h-${marginPx}`;
+  }
+}
+
+function createWatermarkArgs(
+  inputPath: string,
+  watermarkPath: string,
+  outputPath: string,
+  renderPlan: RenderPlan
+): string[] {
+  const watermark = renderPlan.brandPackaging.watermarkAsset;
+
+  if (!renderPlan.preset.video || !watermark) {
+    throw new WorkerError(
+      "EXPORT_FAILED",
+      "Watermark export packaging requires a video preset and a watermark asset."
+    );
+  }
+
+  const [x, y] = resolveWatermarkCoordinates(watermark.position, watermark.marginPx).split(":");
+  const filterGraph =
+    `[1:v]format=rgba,colorchannelmixer=aa=${watermark.opacity}[wm];` +
+    `[0:v][wm]overlay=${x}:${y}[vout]`;
+  const args = ["-y", "-i", inputPath, "-i", watermarkPath, "-filter_complex", filterGraph, "-map", "[vout]"];
+
+  args.push(
+    "-c:v",
+    renderPlan.preset.video.codec,
+    "-pix_fmt",
+    renderPlan.preset.video.pixelFormat,
+    "-r",
+    String(renderPlan.preset.video.frameRate),
+    "-b:v",
+    `${renderPlan.preset.video.bitrateKbps}k`
+  );
+
+  if (renderPlan.hasAudioOutput && renderPlan.preset.audio) {
+    args.push(
+      "-map",
+      "0:a?",
+      "-c:a",
+      renderPlan.preset.audio.codec,
+      "-ar",
+      String(renderPlan.preset.audio.sampleRate),
+      "-ac",
+      String(renderPlan.preset.audio.channelCount),
+      "-b:a",
+      `${renderPlan.preset.audio.bitrateKbps}k`
+    );
+  }
+
+  args.push("-movflags", "+faststart", "-progress", "pipe:1", "-nostats", outputPath);
+  return args;
+}
+
 function createBurnInFilterScript(plates: CaptionBurnInPlate[]): string {
   let currentLabel = "[0:v]";
 
@@ -1068,6 +1201,7 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
   const artifactDescriptor = resolveExportArtifactDirectory(paths, exportRunId);
   const artifactDirectory = artifactDescriptor.absolutePath;
   const segmentsDirectory = join(artifactDirectory, "segments");
+  const brandingDirectory = join(artifactDirectory, "branding");
   const progressLogPath = join(artifactDirectory, "ffmpeg-progress.log");
   const ffmpegLogPath = join(artifactDirectory, "ffmpeg.log");
   const renderPlanPath = join(artifactDirectory, "render-plan.json");
@@ -1077,6 +1211,7 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
   const snapshotManifestPath = join(artifactDirectory, "snapshots", "snapshot-manifest.json");
 
   await mkdir(segmentsDirectory, { recursive: true });
+  await mkdir(brandingDirectory, { recursive: true });
 
   let diagnostics = {
     ...existingRun.diagnostics,
@@ -1132,6 +1267,23 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
       "Caption burn-in is ignored for non-video export presets."
     );
     renderPlan.captionBurnIn = null;
+  }
+
+  if (renderPlan.request.exportMode !== "video") {
+    if (renderPlan.brandPackaging.introAsset || renderPlan.brandPackaging.outroAsset) {
+      renderPlan.diagnostics.warnings.push(
+        "Stage 11 intro/outro packaging is ignored for non-video exports."
+      );
+      renderPlan.brandPackaging.introAsset = null;
+      renderPlan.brandPackaging.outroAsset = null;
+    }
+
+    if (renderPlan.brandPackaging.watermarkAsset) {
+      renderPlan.diagnostics.warnings.push(
+        "Stage 11 watermark packaging is ignored for non-video exports."
+      );
+      renderPlan.brandPackaging.watermarkAsset = null;
+    }
   }
 
   if (renderPlan.captionBurnIn) {
@@ -1249,6 +1401,27 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
     }
   }
 
+  for (const asset of [
+    renderPlan.brandPackaging.introAsset,
+    renderPlan.brandPackaging.outroAsset,
+    renderPlan.brandPackaging.watermarkAsset
+  ]) {
+    if (asset && !(await fileExists(asset.absolutePath))) {
+      await updateRunState(paths.databasePath, exportRunId, {
+        status: "failed",
+        step: "Brand asset missing",
+        progress: 1,
+        errorMessage: `Brand asset missing: ${asset.absolutePath}`,
+        error: {
+          code: "MISSING_SOURCE_MEDIA",
+          message: `Brand asset missing: ${asset.absolutePath}`
+        },
+        completedAt: nowIso()
+      });
+      return;
+    }
+  }
+
   await writeFile(renderPlanPath, JSON.stringify(renderPlan, null, 2), "utf8");
 
   const ffmpegSpecResult = compileFfmpegExecutionSpec(renderPlan, exportRunId);
@@ -1294,9 +1467,16 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
     ffmpegSpecPath,
     segmentSteps: [],
     concatStep: null,
-    burnInStep: null
+    burnInStep: null,
+    brandSteps: {
+      introTranscode: [],
+      outroTranscode: [],
+      watermarkStep: null,
+      packagingConcatStep: null
+    }
   };
   const segmentPaths: string[] = [];
+  const finalOutputPath = existingRun.outputPath ?? existingRun.request.outputPath ?? "";
 
   for (const segment of ffmpegSpec.segmentSpecs) {
     const filterScriptPath = join(
@@ -1368,9 +1548,14 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
     artifactDirectory
   });
 
-  const assembledOutputPath = renderPlan.captionBurnIn
-    ? join(artifactDirectory, "assembled-pre-burnin.mp4")
-    : (existingRun.outputPath ?? existingRun.request.outputPath ?? "");
+  const requiresPostConcatPackaging =
+    Boolean(renderPlan.captionBurnIn) ||
+    Boolean(renderPlan.brandPackaging.watermarkAsset) ||
+    Boolean(renderPlan.brandPackaging.introAsset) ||
+    Boolean(renderPlan.brandPackaging.outroAsset);
+  const assembledOutputPath = requiresPostConcatPackaging
+    ? join(artifactDirectory, "assembled-base.mp4")
+    : finalOutputPath;
   const concatArgs = createConcatArgs(
     concatListPath,
     assembledOutputPath
@@ -1403,14 +1588,16 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
     }
   );
 
+  let currentOutputPath = assembledOutputPath;
+
   if (renderPlan.captionBurnIn?.subtitleArtifactPath) {
     const filterScriptPath =
       burnInFilterScriptPath ?? join(artifactDirectory, "captions", "burn-in.ffmpeg-filter.txt");
     const burnInArgs = createBurnInArgs(
-      assembledOutputPath,
+      currentOutputPath,
       filterScriptPath,
       burnInPlates,
-      existingRun.outputPath ?? existingRun.request.outputPath ?? "",
+      join(artifactDirectory, "assembled-burn-in.mp4"),
       renderPlan
     );
     developmentManifest.burnInStep = {
@@ -1418,7 +1605,7 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
       subtitlePath: renderPlan.captionBurnIn.subtitleArtifactPath,
       filterScriptPath,
       platePaths: burnInPlates.map((plate) => plate.imagePath),
-      outputPath: existingRun.outputPath ?? existingRun.request.outputPath ?? "",
+      outputPath: join(artifactDirectory, "assembled-burn-in.mp4"),
       args: burnInArgs
     };
     await writeDevelopmentManifest(developmentManifestPath, developmentManifest);
@@ -1450,6 +1637,250 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
         });
       }
     );
+    currentOutputPath = join(artifactDirectory, "assembled-burn-in.mp4");
+  }
+
+  if (renderPlan.brandPackaging.watermarkAsset) {
+    const watermarkArgs = createWatermarkArgs(
+      currentOutputPath,
+      renderPlan.brandPackaging.watermarkAsset.absolutePath,
+      join(artifactDirectory, "assembled-watermark.mp4"),
+      renderPlan
+    );
+    developmentManifest.brandSteps.watermarkStep = {
+      sourcePath: currentOutputPath,
+      watermarkPath: renderPlan.brandPackaging.watermarkAsset.absolutePath,
+      outputPath: join(artifactDirectory, "assembled-watermark.mp4"),
+      args: watermarkArgs
+    };
+    await writeDevelopmentManifest(developmentManifestPath, developmentManifest);
+    await updateRunState(paths.databasePath, exportRunId, {
+      status: "finalizing",
+      step: "Applying watermark",
+      progress: 0.95,
+      diagnostics,
+      artifactDirectory,
+      renderPlan
+    });
+    await runFfmpegStep(
+      paths.directory,
+      exportRunId,
+      watermarkArgs,
+      renderPlan.durationUs,
+      "watermark",
+      0.95,
+      0.02,
+      progressLogPath,
+      ffmpegLogPath,
+      async (progress, step) => {
+        await updateRunState(paths.databasePath, exportRunId, {
+          status: "finalizing",
+          step,
+          progress,
+          diagnostics,
+          artifactDirectory
+        });
+      }
+    );
+    currentOutputPath = join(artifactDirectory, "assembled-watermark.mp4");
+  }
+
+  if (renderPlan.request.exportMode === "video") {
+    const packagedSegments: string[] = [];
+
+    if (renderPlan.brandPackaging.introAsset) {
+      const introOutputPath = join(brandingDirectory, "intro.mp4");
+      const introArgs = createBrandAssetTranscodeArgs(
+        renderPlan.brandPackaging.introAsset.absolutePath,
+        introOutputPath,
+        renderPlan
+      );
+      developmentManifest.brandSteps.introTranscode.push({
+        sourcePath: renderPlan.brandPackaging.introAsset.absolutePath,
+        outputPath: introOutputPath,
+        args: introArgs
+      });
+      await writeDevelopmentManifest(developmentManifestPath, developmentManifest);
+      await updateRunState(paths.databasePath, exportRunId, {
+        status: "finalizing",
+        step: "Transcoding intro",
+        progress: 0.965,
+        diagnostics,
+        artifactDirectory
+      });
+      await runFfmpegStep(
+        paths.directory,
+        exportRunId,
+        introArgs,
+        renderPlan.durationUs,
+        "intro",
+        0.965,
+        0.01,
+        progressLogPath,
+        ffmpegLogPath,
+        async (progress, step) => {
+          await updateRunState(paths.databasePath, exportRunId, {
+            status: "finalizing",
+            step,
+            progress,
+            diagnostics,
+            artifactDirectory
+          });
+        }
+      );
+      packagedSegments.push(introOutputPath);
+    }
+
+    packagedSegments.push(currentOutputPath);
+
+    if (renderPlan.brandPackaging.outroAsset) {
+      const outroOutputPath = join(brandingDirectory, "outro.mp4");
+      const outroArgs = createBrandAssetTranscodeArgs(
+        renderPlan.brandPackaging.outroAsset.absolutePath,
+        outroOutputPath,
+        renderPlan
+      );
+      developmentManifest.brandSteps.outroTranscode.push({
+        sourcePath: renderPlan.brandPackaging.outroAsset.absolutePath,
+        outputPath: outroOutputPath,
+        args: outroArgs
+      });
+      await writeDevelopmentManifest(developmentManifestPath, developmentManifest);
+      await updateRunState(paths.databasePath, exportRunId, {
+        status: "finalizing",
+        step: "Transcoding outro",
+        progress: 0.975,
+        diagnostics,
+        artifactDirectory
+      });
+      await runFfmpegStep(
+        paths.directory,
+        exportRunId,
+        outroArgs,
+        renderPlan.durationUs,
+        "outro",
+        0.975,
+        0.01,
+        progressLogPath,
+        ffmpegLogPath,
+        async (progress, step) => {
+          await updateRunState(paths.databasePath, exportRunId, {
+            status: "finalizing",
+            step,
+            progress,
+            diagnostics,
+            artifactDirectory
+          });
+        }
+      );
+      packagedSegments.push(outroOutputPath);
+    }
+
+    if (packagedSegments.length > 1) {
+      const packagingConcatListPath = join(brandingDirectory, "brand-packaging.concat.txt");
+      await writeFile(
+        packagingConcatListPath,
+        `${packagedSegments.map((path) => `file '${path.replace(/'/gu, "'\\''")}'`).join("\n")}\n`,
+        "utf8"
+      );
+      const packagingConcatArgs = createConcatArgs(packagingConcatListPath, finalOutputPath);
+      developmentManifest.brandSteps.packagingConcatStep = {
+        concatListPath: packagingConcatListPath,
+        outputPath: finalOutputPath,
+        args: packagingConcatArgs
+      };
+      await writeDevelopmentManifest(developmentManifestPath, developmentManifest);
+      await updateRunState(paths.databasePath, exportRunId, {
+        status: "finalizing",
+        step: "Packaging brand assets",
+        progress: 0.985,
+        diagnostics,
+        artifactDirectory
+      });
+      await runFfmpegStep(
+        paths.directory,
+        exportRunId,
+        packagingConcatArgs,
+        renderPlan.durationUs,
+        "brand-packaging",
+        0.985,
+        0.01,
+        progressLogPath,
+        ffmpegLogPath,
+        async (progress, step) => {
+          await updateRunState(paths.databasePath, exportRunId, {
+            status: "finalizing",
+            step,
+            progress,
+            diagnostics,
+            artifactDirectory
+          });
+        }
+      );
+      currentOutputPath = finalOutputPath;
+    } else if (currentOutputPath !== finalOutputPath) {
+      const directConcatListPath = join(brandingDirectory, "finalize.concat.txt");
+      await writeFile(directConcatListPath, `file '${currentOutputPath.replace(/'/gu, "'\\''")}'\n`, "utf8");
+      const directConcatArgs = createConcatArgs(directConcatListPath, finalOutputPath);
+      developmentManifest.brandSteps.packagingConcatStep = {
+        concatListPath: directConcatListPath,
+        outputPath: finalOutputPath,
+        args: directConcatArgs
+      };
+      await writeDevelopmentManifest(developmentManifestPath, developmentManifest);
+      await runFfmpegStep(
+        paths.directory,
+        exportRunId,
+        directConcatArgs,
+        renderPlan.durationUs,
+        "finalize-output",
+        0.99,
+        0.005,
+        progressLogPath,
+        ffmpegLogPath,
+        async (progress, step) => {
+          await updateRunState(paths.databasePath, exportRunId, {
+            status: "finalizing",
+            step,
+            progress,
+            diagnostics,
+            artifactDirectory
+          });
+        }
+      );
+      currentOutputPath = finalOutputPath;
+    }
+  } else if (currentOutputPath !== finalOutputPath) {
+    const directConcatListPath = join(brandingDirectory, "finalize.concat.txt");
+    await writeFile(directConcatListPath, `file '${currentOutputPath.replace(/'/gu, "'\\''")}'\n`, "utf8");
+    const directConcatArgs = createConcatArgs(directConcatListPath, finalOutputPath);
+    developmentManifest.brandSteps.packagingConcatStep = {
+      concatListPath: directConcatListPath,
+      outputPath: finalOutputPath,
+      args: directConcatArgs
+    };
+    await writeDevelopmentManifest(developmentManifestPath, developmentManifest);
+    await runFfmpegStep(
+      paths.directory,
+      exportRunId,
+      directConcatArgs,
+      renderPlan.durationUs,
+      "finalize-output",
+      0.99,
+      0.005,
+      progressLogPath,
+      ffmpegLogPath,
+      async (progress, step) => {
+        await updateRunState(paths.databasePath, exportRunId, {
+          status: "finalizing",
+          step,
+          progress,
+          diagnostics,
+          artifactDirectory
+        });
+      }
+    );
+    currentOutputPath = finalOutputPath;
   }
 
   await updateRunState(paths.databasePath, exportRunId, {
@@ -1460,7 +1891,7 @@ async function runExportPipeline(directory: string, exportRunId: string): Promis
     artifactDirectory
   });
 
-  const verification = await verifyExportOutput(existingRun.outputPath ?? "", renderPlan);
+  const verification = await verifyExportOutput(finalOutputPath, renderPlan);
   await writeFile(verificationPath, JSON.stringify(verification, null, 2), "utf8");
 
   await updateRunState(paths.databasePath, exportRunId, {

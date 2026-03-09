@@ -324,6 +324,45 @@ async function waitForWorkflowRunStateViaApi(
   );
 }
 
+async function waitForWorkflowRunByScheduleViaApi(
+  localApi: LocalApiSmokeStatus,
+  projectDirectory: string,
+  scheduleId: string,
+  timeoutMs = 30_000
+): Promise<{ id: string; status: string }> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const runs = await requestLocalApi<{
+      ok: boolean;
+      data: Array<{ id: string; scheduleId: string | null; status: string }>;
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflow.runs",
+        input: {
+          directory: projectDirectory
+        }
+      }
+    });
+
+    if (!runs.body.ok) {
+      throw new Error("Workflow run list query failed while waiting for a scheduled run.");
+    }
+
+    const match = runs.body.data.find((run) => run.scheduleId === scheduleId);
+
+    if (match) {
+      return match;
+    }
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+  }
+
+  throw new Error(`Timed out waiting for scheduled workflow run ${scheduleId}.`);
+}
+
 export async function runSmoke(): Promise<void> {
   const require = createRequire(import.meta.url);
   const workspaceRoot = resolve(process.cwd());
@@ -331,11 +370,12 @@ export async function runSmoke(): Promise<void> {
   const packagedExecutable = process.env.CLAWCUT_SMOKE_EXECUTABLE?.trim() || null;
   const electronBinary = packagedExecutable || (require("electron") as string);
   const mainEntry = resolve(appRoot, "out/main/index.js");
-  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage8-smoke-project-"));
+  const projectDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage11-smoke-project-"));
   const workflowProjectDirectory = mkdtempSync(
-    join(tmpdir(), "clawcut-stage9-smoke-workflow-project-")
+    join(tmpdir(), "clawcut-stage11-smoke-workflow-project-")
   );
-  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage8-smoke-import-"));
+  const importDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage11-smoke-import-"));
+  const userDataDirectory = mkdtempSync(join(tmpdir(), "clawcut-stage11-smoke-userdata-"));
   const originalPath = join(importDirectory, "talking-head-sample.mp4");
   const transcriptionFixturePath = join(importDirectory, "stage9-transcript.txt");
   const screenshotDirectory = resolve(workspaceRoot, "output/playwright");
@@ -361,7 +401,9 @@ export async function runSmoke(): Promise<void> {
       CLAWCUT_WORKSPACE_ROOT: workspaceRoot,
       CLAWCUT_SMOKE: "1",
       CLAWCUT_TRANSCRIPTION_ADAPTER: "fixture",
-      CLAWCUT_TRANSCRIPTION_FIXTURE_PATH: transcriptionFixturePath
+      CLAWCUT_TRANSCRIPTION_FIXTURE_PATH: transcriptionFixturePath,
+      CLAWCUT_WORKFLOW_SCHEDULER_INTERVAL_MS: "500",
+      CLAWCUT_USER_DATA_PATH: userDataDirectory
     }
   });
 
@@ -369,10 +411,10 @@ export async function runSmoke(): Promise<void> {
     const page = await electronApp.firstWindow();
 
     await page.getByTestId("project-directory-input").fill(projectDirectory);
-    await page.getByTestId("project-name-input").fill("Stage 8 Smoke");
+    await page.getByTestId("project-name-input").fill("Stage 11 Smoke");
     await page.getByTestId("create-project-button").click();
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 8 Smoke") === true,
+      () => document.querySelector('[data-testid="workspace-header"]')?.textContent?.includes("Stage 11 Smoke") === true,
       undefined,
       {
         timeout: 10_000
@@ -381,7 +423,7 @@ export async function runSmoke(): Promise<void> {
 
     const projectHeading = await page.getByTestId("workspace-header").textContent();
 
-    if (!projectHeading?.includes("Stage 8 Smoke")) {
+    if (!projectHeading?.includes("Stage 11 Smoke")) {
       throw new Error(`Smoke project was not opened. Header text: ${projectHeading ?? "missing"}`);
     }
 
@@ -392,17 +434,23 @@ export async function runSmoke(): Promise<void> {
       enabledMutatingTools: [
         "clawcut.generate_captions",
         "clawcut.reject_suggestion",
-        "clawcut.seek_preview_to_suggestion"
+        "clawcut.seek_preview_to_suggestion",
+        "clawcut.generate_social_candidates"
       ],
       enabledHighImpactTools: [
         "clawcut.approve_workflow_step",
         "clawcut.resume_workflow_run",
+        "clawcut.resume_schedule",
+        "clawcut.pause_schedule",
+        "clawcut.run_workflow_profile",
+        "clawcut.create_schedule",
         "clawcut.start_batch_workflow",
         "clawcut.start_workflow",
         "clawcut.transcribe_clip",
         "clawcut.apply_suggestion",
         "clawcut.export_subtitles",
-        "clawcut.start_export"
+        "clawcut.start_export",
+        "clawcut.export_candidate_package"
       ]
     });
     const health = await requestLocalApi<{ ok: boolean; data: { status: string } }>(
@@ -2127,8 +2175,365 @@ export async function runSmoke(): Promise<void> {
       throw new Error("Batch workflow did not complete successfully for multiple clips.");
     }
 
+    const createdProfile = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        result: {
+          ok: boolean;
+          commandType: string;
+          profileId: string | null;
+        };
+      };
+    }>(localApi, "/api/v1/command", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflowProfiles.create",
+        input: {
+          directory: workflowProjectDirectory,
+          profile: {
+            id: "stage11-captioned-profile",
+            version: 1,
+            name: "Stage 11 Captioned Export",
+            description: "Reusable captioned export defaults for smoke verification.",
+            templateId: "captioned-export-v1",
+            defaultInputs: {
+              clipId: workflowTimelineSeed.clipIds[0],
+              brandKitId: "clawcut-clean",
+              exportPresetId: "video-share-720p",
+              exportSubtitles: true,
+              enableBurnIn: false,
+              requireApprovalForExport: false
+            },
+            approvalPolicy: "respect-template",
+            defaultBrandKitId: "clawcut-clean",
+            defaultExportPresetId: "video-share-720p",
+            enabledOptionalSteps: [],
+            compatibility: {
+              templateId: "captioned-export-v1",
+              templateVersion: 1
+            },
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        }
+      }
+    });
+
+    if (
+      !createdProfile.body.ok ||
+      !createdProfile.body.data.result.ok ||
+      createdProfile.body.data.result.commandType !== "CreateWorkflowProfile"
+    ) {
+      throw new Error("Stage 11 workflow profile creation failed through the integration boundary.");
+    }
+
+    const profileList = await openClawClient.invokeTool<Array<{ id: string }>>(
+      "clawcut.list_workflow_profiles",
+      {
+        directory: workflowProjectDirectory
+      }
+    );
+
+    if (
+      !profileList.response.ok ||
+      !profileList.response.data.some((profile) => profile.id === "stage11-captioned-profile")
+    ) {
+      throw new Error("Workflow profile discovery did not expose the created Stage 11 profile.");
+    }
+
+    const startedProfile = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        workflowRun: { id: string };
+      };
+    }>("clawcut.run_workflow_profile", {
+      directory: workflowProjectDirectory,
+      profileId: "stage11-captioned-profile",
+      inputOverrides: {}
+    });
+
+    if (
+      !startedProfile.response.ok ||
+      !startedProfile.response.data.result.ok ||
+      startedProfile.response.data.result.commandType !== "RunWorkflowProfile"
+    ) {
+      throw new Error("Workflow profile run did not start through the OpenClaw boundary.");
+    }
+
+    const completedProfileRun = await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      startedProfile.response.data.result.workflowRun.id,
+      ["completed", "failed"]
+    );
+
+    if (
+      completedProfileRun.status !== "completed" ||
+      !completedProfileRun.artifacts.some((artifact) => artifact.kind === "subtitle")
+    ) {
+      throw new Error("Workflow profile run did not complete with subtitle artifacts.");
+    }
+
+    const createdScheduledProfile = await requestLocalApi<{
+      ok: boolean;
+      data: {
+        result: {
+          ok: boolean;
+          commandType: string;
+          profileId: string | null;
+        };
+      };
+    }>(localApi, "/api/v1/command", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflowProfiles.create",
+        input: {
+          directory: workflowProjectDirectory,
+          profile: {
+            id: "stage11-smart-cleanup-profile",
+            version: 1,
+            name: "Stage 11 Smart Cleanup",
+            description: "Scheduled smart cleanup defaults for smoke verification.",
+            templateId: "smart-cleanup-v1",
+            defaultInputs: {
+              clipId: workflowTimelineSeed.clipIds[0],
+              primarySuggestionSource: "filler",
+              requireApproval: true
+            },
+            approvalPolicy: "force-approval",
+            defaultBrandKitId: null,
+            defaultExportPresetId: null,
+            enabledOptionalSteps: [],
+            compatibility: {
+              templateId: "smart-cleanup-v1",
+              templateVersion: 1
+            },
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        }
+      }
+    });
+
+    if (
+      !createdScheduledProfile.body.ok ||
+      !createdScheduledProfile.body.data.result.ok ||
+      createdScheduledProfile.body.data.result.commandType !== "CreateWorkflowProfile"
+    ) {
+      throw new Error("Scheduled smart-cleanup workflow profile creation failed.");
+    }
+
+    const createdSchedule = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        scheduleId: string | null;
+      };
+    }>("clawcut.create_schedule", {
+      directory: workflowProjectDirectory,
+      schedule: {
+        id: "stage11-smart-cleanup-schedule",
+        version: 1,
+        name: "Stage 11 Smart Cleanup Schedule",
+        enabled: true,
+        workflowProfileId: "stage11-smart-cleanup-profile",
+        projectPath: workflowProjectDirectory,
+        targetResolver: {
+          kind: "static-clip-ids",
+          clipIds: [workflowTimelineSeed.clipIds[0]]
+        },
+        trigger: {
+          kind: "interval",
+          intervalMinutes: 60
+        },
+        approvalPolicy: "respect-profile",
+        concurrencyPolicy: "skip-if-running",
+        lastRunAt: null,
+        nextRunAt: new Date(Date.now() - 1_000).toISOString(),
+        lastRunStatus: null,
+        lastWorkflowRunId: null,
+        lastError: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    });
+
+    if (
+      !createdSchedule.response.ok ||
+      !createdSchedule.response.data.result.ok ||
+      createdSchedule.response.data.result.commandType !== "CreateWorkflowSchedule" ||
+      !createdSchedule.response.data.result.scheduleId
+    ) {
+      throw new Error("Workflow schedule creation failed through the OpenClaw boundary.");
+    }
+
+    const scheduledRun = await waitForWorkflowRunByScheduleViaApi(
+      localApi,
+      workflowProjectDirectory,
+      createdSchedule.response.data.result.scheduleId
+    );
+
+    const scheduledState = await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      scheduledRun.id,
+      ["waiting-approval", "completed"]
+    );
+
+    if (scheduledState.status === "waiting-approval") {
+      const scheduledApprovals = await openClawClient.invokeTool<
+        Array<{ id: string; workflowRunId: string }>
+      >("clawcut.list_pending_approvals", {
+        directory: workflowProjectDirectory
+      });
+
+      const pendingApproval = scheduledApprovals.response.ok
+        ? scheduledApprovals.response.data.find((approval) => approval.workflowRunId === scheduledRun.id)
+        : null;
+
+      if (!pendingApproval) {
+        throw new Error("Scheduled workflow reached approval state without exposing an approval record.");
+      }
+
+      const approvedScheduleRun = await openClawClient.invokeTool<{
+        snapshot: unknown;
+        result: { ok: boolean; commandType: string };
+      }>("clawcut.approve_workflow_step", {
+        directory: workflowProjectDirectory,
+        workflowRunId: scheduledRun.id,
+        approvalId: pendingApproval.id
+      });
+
+      if (
+        !approvedScheduleRun.response.ok ||
+        !approvedScheduleRun.response.data.result.ok ||
+        approvedScheduleRun.response.data.result.commandType !== "ApproveWorkflowStep"
+      ) {
+        throw new Error("Scheduled workflow approval failed.");
+      }
+
+      await waitForWorkflowRunStateViaApi(
+        localApi,
+        workflowProjectDirectory,
+        scheduledRun.id,
+        ["completed", "failed"]
+      );
+    }
+
+    const pauseSchedule = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: { ok: boolean; commandType: string; scheduleId: string | null };
+    }>("clawcut.pause_schedule", {
+      directory: workflowProjectDirectory,
+      scheduleId: createdSchedule.response.data.result.scheduleId
+    });
+
+    if (
+      !pauseSchedule.response.ok ||
+      !pauseSchedule.response.data.result.ok ||
+      pauseSchedule.response.data.result.commandType !== "PauseWorkflowSchedule"
+    ) {
+      throw new Error("Workflow schedule pause failed through the OpenClaw boundary.");
+    }
+
+    const resumeSchedule = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: { ok: boolean; commandType: string; scheduleId: string | null };
+    }>("clawcut.resume_schedule", {
+      directory: workflowProjectDirectory,
+      scheduleId: createdSchedule.response.data.result.scheduleId
+    });
+
+    if (
+      !resumeSchedule.response.ok ||
+      !resumeSchedule.response.data.result.ok ||
+      resumeSchedule.response.data.result.commandType !== "ResumeWorkflowSchedule"
+    ) {
+      throw new Error("Workflow schedule resume failed through the OpenClaw boundary.");
+    }
+
+    const socialCandidates = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        workflowRun: { id: string };
+      };
+    }>("clawcut.generate_social_candidates", {
+      directory: workflowProjectDirectory,
+      input: {
+        clipId: workflowTimelineSeed.clipIds[0]
+      }
+    });
+
+    if (
+      !socialCandidates.response.ok ||
+      !socialCandidates.response.data.result.ok ||
+      socialCandidates.response.data.result.commandType !== "StartWorkflow"
+    ) {
+      throw new Error("Social candidate workflow did not start through the OpenClaw boundary.");
+    }
+
+    const completedCandidateWorkflow = await waitForWorkflowRunStateViaApi(
+      localApi,
+      workflowProjectDirectory,
+      socialCandidates.response.data.result.workflowRun.id,
+      ["completed", "failed"]
+    );
+
+    if (
+      completedCandidateWorkflow.status !== "completed" ||
+      !completedCandidateWorkflow.artifacts.some((artifact) => artifact.kind === "candidate-package")
+    ) {
+      throw new Error("Social candidate workflow did not produce candidate packages.");
+    }
+
+    const candidatePackages = await requestLocalApi<{
+      ok: boolean;
+      data: Array<{ id: string }>;
+    }>(localApi, "/api/v1/query", {
+      method: "POST",
+      token: localApi.token,
+      body: {
+        name: "workflow.candidatePackages",
+        input: {
+          directory: workflowProjectDirectory
+        }
+      }
+    });
+
+    if (!candidatePackages.body.ok || candidatePackages.body.data.length === 0) {
+      throw new Error("Candidate package query did not expose the generated Stage 11 packages.");
+    }
+
+    const candidateExport = await openClawClient.invokeTool<{
+      snapshot: unknown;
+      result: {
+        ok: boolean;
+        commandType: string;
+        exportRunId: string;
+      };
+    }>("clawcut.export_candidate_package", {
+      directory: workflowProjectDirectory,
+      workflowRunId: socialCandidates.response.data.result.workflowRun.id,
+      candidatePackageId: candidatePackages.body.data[0]?.id
+    });
+
+    if (
+      !candidateExport.response.ok ||
+      !candidateExport.response.data.result.ok ||
+      candidateExport.response.data.result.commandType !== "ExportCandidatePackage"
+    ) {
+      throw new Error("Candidate package export did not run through the OpenClaw boundary.");
+    }
+
     await page.screenshot({
-      path: resolve(screenshotDirectory, "clawcut-stage9-smoke.png"),
+      path: resolve(screenshotDirectory, "clawcut-stage11-smoke.png"),
       fullPage: true
     });
   } finally {
@@ -2136,6 +2541,7 @@ export async function runSmoke(): Promise<void> {
     rmSync(projectDirectory, { recursive: true, force: true });
     rmSync(workflowProjectDirectory, { recursive: true, force: true });
     rmSync(importDirectory, { recursive: true, force: true });
+    rmSync(userDataDirectory, { recursive: true, force: true });
   }
 }
 

@@ -33,6 +33,9 @@ export const WORKFLOW_STEP_KINDS = [
   "compileSmartPlan",
   "applySuggestionSet",
   "createRegionsFromSuggestions",
+  "compileCandidatePackages",
+  "compileTranscriptRangeSelection",
+  "exportCandidatePackage",
   "captureExportSnapshot",
   "approvalCheckpoint"
 ] as const;
@@ -45,7 +48,12 @@ export const WORKFLOW_ARTIFACT_KINDS = [
   "edit-plan",
   "snapshot",
   "regions",
-  "diagnostic"
+  "diagnostic",
+  "candidate-package",
+  "candidate-export",
+  "brand-asset",
+  "schedule-report",
+  "transcript-range-selection"
 ] as const;
 export const WORKFLOW_APPROVAL_STATUSES = ["pending", "approved", "rejected"] as const;
 export const WORKFLOW_BATCH_MODES = ["single", "clip-batch"] as const;
@@ -54,13 +62,34 @@ export const WORKFLOW_MUTABILITY_CLASSES = ["read", "write"] as const;
 export const WORKFLOW_EXECUTION_MODES = ["sync", "job"] as const;
 export const WORKFLOW_INPUT_FIELD_TYPES = [
   "string",
+  "integer",
   "boolean",
   "string-array",
   "clip-id",
+  "transcript-id",
   "caption-template-id",
   "brand-kit-id",
   "export-preset-id",
-  "timeline-id"
+  "timeline-id",
+  "file-path"
+] as const;
+export const WORKFLOW_PROFILE_APPROVAL_POLICIES = [
+  "respect-template",
+  "force-approval"
+] as const;
+export const WORKFLOW_SCHEDULE_APPROVAL_POLICIES = [
+  "respect-profile",
+  "force-approval"
+] as const;
+export const WORKFLOW_SCHEDULE_CONCURRENCY_POLICIES = [
+  "skip-if-running",
+  "queue"
+] as const;
+export const WORKFLOW_SCHEDULE_TRIGGER_KINDS = ["interval"] as const;
+export const WORKFLOW_TARGET_RESOLVER_KINDS = [
+  "use-profile-defaults",
+  "static-clip-ids",
+  "all-video-clips"
 ] as const;
 
 export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
@@ -73,12 +102,93 @@ export type WorkflowSafetyClass = (typeof WORKFLOW_SAFETY_CLASSES)[number];
 export type WorkflowMutabilityClass = (typeof WORKFLOW_MUTABILITY_CLASSES)[number];
 export type WorkflowExecutionMode = (typeof WORKFLOW_EXECUTION_MODES)[number];
 export type WorkflowInputFieldType = (typeof WORKFLOW_INPUT_FIELD_TYPES)[number];
+export type WorkflowProfileApprovalPolicy =
+  (typeof WORKFLOW_PROFILE_APPROVAL_POLICIES)[number];
+export type WorkflowScheduleApprovalPolicy =
+  (typeof WORKFLOW_SCHEDULE_APPROVAL_POLICIES)[number];
+export type WorkflowScheduleConcurrencyPolicy =
+  (typeof WORKFLOW_SCHEDULE_CONCURRENCY_POLICIES)[number];
+export type WorkflowScheduleTriggerKind =
+  (typeof WORKFLOW_SCHEDULE_TRIGGER_KINDS)[number];
+export type WorkflowTargetResolverKind =
+  (typeof WORKFLOW_TARGET_RESOLVER_KINDS)[number];
 
 export type WorkflowTemplateId =
   | "captioned-export-v1"
   | "smart-cleanup-v1"
   | "short-clip-candidates-v1"
-  | "batch-caption-export-v1";
+  | "batch-caption-export-v1"
+  | "social-candidate-package-v1"
+  | "transcript-range-package-v1";
+
+export interface WorkflowCompatibility {
+  templateId: WorkflowTemplateId;
+  templateVersion: number;
+}
+
+export interface WorkflowProfile {
+  id: string;
+  version: number;
+  name: string;
+  description: string;
+  templateId: WorkflowTemplateId;
+  defaultInputs: Record<string, unknown>;
+  approvalPolicy: WorkflowProfileApprovalPolicy;
+  defaultBrandKitId: string | null;
+  defaultExportPresetId: string | null;
+  enabledOptionalSteps: string[];
+  compatibility: WorkflowCompatibility;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowTargetResolver {
+  kind: WorkflowTargetResolverKind;
+  clipIds?: string[];
+}
+
+export interface WorkflowScheduleTrigger {
+  kind: WorkflowScheduleTriggerKind;
+  intervalMinutes: number;
+}
+
+export interface WorkflowSchedule {
+  id: string;
+  version: number;
+  name: string;
+  enabled: boolean;
+  workflowProfileId: string;
+  projectPath: string;
+  targetResolver: WorkflowTargetResolver;
+  trigger: WorkflowScheduleTrigger;
+  approvalPolicy: WorkflowScheduleApprovalPolicy;
+  concurrencyPolicy: WorkflowScheduleConcurrencyPolicy;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastRunStatus: WorkflowRunStatus | "skipped" | "scheduled" | null;
+  lastWorkflowRunId: string | null;
+  lastError: JobError | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowCandidatePackage {
+  id: string;
+  workflowRunId: string;
+  sourceKind: "highlight" | "transcript-range";
+  title: string;
+  timelineId: string;
+  transcriptId: string | null;
+  startUs: number;
+  endUs: number;
+  label: string;
+  sourceSuggestionSetId: string | null;
+  sourceSuggestionId: string | null;
+  regionId: string | null;
+  exportRunId: string | null;
+  snapshotArtifactIds: string[];
+  createdAt: string;
+}
 
 export interface WorkflowInputField {
   id: string;
@@ -212,6 +322,8 @@ export interface WorkflowRun {
   templateId: WorkflowTemplateId;
   templateVersion: number;
   projectDirectory: string;
+  profileId: string | null;
+  scheduleId: string | null;
   status: WorkflowRunStatus;
   parentJobId: string;
   input: Record<string, unknown>;
@@ -235,7 +347,10 @@ export interface WorkflowSessionSnapshot {
   projectName: string;
   workflows: WorkflowTemplate[];
   brandKits: BrandKit[];
+  workflowProfiles: WorkflowProfile[];
+  schedules: WorkflowSchedule[];
   workflowRuns: WorkflowRun[];
+  candidatePackages: WorkflowCandidatePackage[];
   pendingApprovals: WorkflowApproval[];
   activeWorkflowJobId: string | null;
   lastError: JobError | null;
@@ -244,6 +359,7 @@ export interface WorkflowSessionSnapshot {
 export type WorkflowCommandType =
   | "StartWorkflow"
   | "StartBatchWorkflow"
+  | "RunWorkflowProfile"
   | "CancelWorkflowRun"
   | "ResumeWorkflowRun"
   | "RetryWorkflowStep"
@@ -251,7 +367,16 @@ export type WorkflowCommandType =
   | "RejectWorkflowStep"
   | "CreateBrandKit"
   | "UpdateBrandKit"
-  | "SetDefaultBrandKit";
+  | "SetDefaultBrandKit"
+  | "CreateWorkflowProfile"
+  | "UpdateWorkflowProfile"
+  | "DeleteWorkflowProfile"
+  | "CreateWorkflowSchedule"
+  | "UpdateWorkflowSchedule"
+  | "PauseWorkflowSchedule"
+  | "ResumeWorkflowSchedule"
+  | "DeleteWorkflowSchedule"
+  | "ExportCandidatePackage";
 
 export interface StartWorkflowCommand {
   type: "StartWorkflow";
@@ -263,6 +388,16 @@ export interface StartBatchWorkflowCommand {
   type: "StartBatchWorkflow";
   templateId: Extract<WorkflowTemplateId, "batch-caption-export-v1">;
   input: Record<string, unknown>;
+}
+
+export interface RunWorkflowProfileCommand {
+  type: "RunWorkflowProfile";
+  profileId: string;
+  inputOverrides?: Record<string, unknown>;
+  invocation?: {
+    kind: "manual" | "schedule";
+    scheduleId?: string | null;
+  };
 }
 
 export interface CancelWorkflowRunCommand {
@@ -309,9 +444,58 @@ export interface SetDefaultBrandKitCommand {
   brandKitId: string | null;
 }
 
+export interface CreateWorkflowProfileCommand {
+  type: "CreateWorkflowProfile";
+  profile: WorkflowProfile;
+}
+
+export interface UpdateWorkflowProfileCommand {
+  type: "UpdateWorkflowProfile";
+  profileId: string;
+  profile: WorkflowProfile;
+}
+
+export interface DeleteWorkflowProfileCommand {
+  type: "DeleteWorkflowProfile";
+  profileId: string;
+}
+
+export interface CreateWorkflowScheduleCommand {
+  type: "CreateWorkflowSchedule";
+  schedule: WorkflowSchedule;
+}
+
+export interface UpdateWorkflowScheduleCommand {
+  type: "UpdateWorkflowSchedule";
+  scheduleId: string;
+  schedule: WorkflowSchedule;
+}
+
+export interface PauseWorkflowScheduleCommand {
+  type: "PauseWorkflowSchedule";
+  scheduleId: string;
+}
+
+export interface ResumeWorkflowScheduleCommand {
+  type: "ResumeWorkflowSchedule";
+  scheduleId: string;
+}
+
+export interface DeleteWorkflowScheduleCommand {
+  type: "DeleteWorkflowSchedule";
+  scheduleId: string;
+}
+
+export interface ExportCandidatePackageCommand {
+  type: "ExportCandidatePackage";
+  candidatePackageId: string;
+  presetId?: string | null;
+}
+
 export type WorkflowCommand =
   | StartWorkflowCommand
   | StartBatchWorkflowCommand
+  | RunWorkflowProfileCommand
   | CancelWorkflowRunCommand
   | ResumeWorkflowRunCommand
   | RetryWorkflowStepCommand
@@ -319,14 +503,26 @@ export type WorkflowCommand =
   | RejectWorkflowStepCommand
   | CreateBrandKitCommand
   | UpdateBrandKitCommand
-  | SetDefaultBrandKitCommand;
+  | SetDefaultBrandKitCommand
+  | CreateWorkflowProfileCommand
+  | UpdateWorkflowProfileCommand
+  | DeleteWorkflowProfileCommand
+  | CreateWorkflowScheduleCommand
+  | UpdateWorkflowScheduleCommand
+  | PauseWorkflowScheduleCommand
+  | ResumeWorkflowScheduleCommand
+  | DeleteWorkflowScheduleCommand
+  | ExportCandidatePackageCommand;
 
 export interface WorkflowCommandError {
   code:
     | "WORKFLOW_NOT_FOUND"
+    | "WORKFLOW_PROFILE_NOT_FOUND"
+    | "WORKFLOW_SCHEDULE_NOT_FOUND"
     | "WORKFLOW_RUN_NOT_FOUND"
     | "WORKFLOW_STEP_NOT_FOUND"
     | "WORKFLOW_APPROVAL_NOT_FOUND"
+    | "WORKFLOW_CANDIDATE_PACKAGE_NOT_FOUND"
     | "WORKFLOW_INVALID_INPUT"
     | "WORKFLOW_NOT_RESUMABLE"
     | "WORKFLOW_NOT_RETRYABLE"
@@ -358,6 +554,14 @@ export interface StartBatchWorkflowResult {
   queued: boolean;
 }
 
+export interface RunWorkflowProfileResult {
+  ok: true;
+  commandType: "RunWorkflowProfile";
+  profile: WorkflowProfile;
+  workflowRun: WorkflowRun;
+  queued: boolean;
+}
+
 export interface WorkflowRunMutationResult {
   ok: true;
   commandType:
@@ -375,12 +579,132 @@ export interface BrandKitMutationResult {
   brandKitId: string | null;
 }
 
+export interface WorkflowProfileMutationResult {
+  ok: true;
+  commandType:
+    | "CreateWorkflowProfile"
+    | "UpdateWorkflowProfile"
+    | "DeleteWorkflowProfile";
+  profileId: string | null;
+}
+
+export interface WorkflowScheduleMutationResult {
+  ok: true;
+  commandType:
+    | "CreateWorkflowSchedule"
+    | "UpdateWorkflowSchedule"
+    | "PauseWorkflowSchedule"
+    | "ResumeWorkflowSchedule"
+    | "DeleteWorkflowSchedule";
+  scheduleId: string | null;
+}
+
+export interface ExportCandidatePackageResult {
+  ok: true;
+  commandType: "ExportCandidatePackage";
+  candidatePackage: WorkflowCandidatePackage;
+  exportRunId: string;
+}
+
 export type WorkflowCommandResult =
   | WorkflowCommandFailure
   | StartWorkflowResult
   | StartBatchWorkflowResult
+  | RunWorkflowProfileResult
   | WorkflowRunMutationResult
-  | BrandKitMutationResult;
+  | BrandKitMutationResult
+  | WorkflowProfileMutationResult
+  | WorkflowScheduleMutationResult
+  | ExportCandidatePackageResult;
+
+export const workflowProfileSchema = z.object({
+  id: z.string().min(1),
+  version: z.number().int().positive(),
+  name: z.string().min(1),
+  description: z.string(),
+  templateId: z.enum([
+    "captioned-export-v1",
+    "smart-cleanup-v1",
+    "short-clip-candidates-v1",
+    "batch-caption-export-v1",
+    "social-candidate-package-v1",
+    "transcript-range-package-v1"
+  ]),
+  defaultInputs: z.record(z.unknown()),
+  approvalPolicy: z.enum(WORKFLOW_PROFILE_APPROVAL_POLICIES),
+  defaultBrandKitId: z.string().min(1).nullable(),
+  defaultExportPresetId: z.string().min(1).nullable(),
+  enabledOptionalSteps: z.array(z.string().min(1)),
+  compatibility: z.object({
+    templateId: z.enum([
+      "captioned-export-v1",
+      "smart-cleanup-v1",
+      "short-clip-candidates-v1",
+      "batch-caption-export-v1",
+      "social-candidate-package-v1",
+      "transcript-range-package-v1"
+    ]),
+    templateVersion: z.number().int().positive()
+  }),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const workflowScheduleSchema = z.object({
+  id: z.string().min(1),
+  version: z.number().int().positive(),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  workflowProfileId: z.string().min(1),
+  projectPath: z.string().min(1),
+  targetResolver: z.object({
+    kind: z.enum(WORKFLOW_TARGET_RESOLVER_KINDS),
+    clipIds: z.array(z.string().min(1)).optional()
+  }),
+  trigger: z.object({
+    kind: z.enum(WORKFLOW_SCHEDULE_TRIGGER_KINDS),
+    intervalMinutes: z.number().int().positive()
+  }),
+  approvalPolicy: z.enum(WORKFLOW_SCHEDULE_APPROVAL_POLICIES),
+  concurrencyPolicy: z.enum(WORKFLOW_SCHEDULE_CONCURRENCY_POLICIES),
+  lastRunAt: z.string().datetime().nullable(),
+  nextRunAt: z.string().datetime().nullable(),
+  lastRunStatus: z
+    .union([
+      z.enum(WORKFLOW_RUN_STATUSES),
+      z.literal("skipped"),
+      z.literal("scheduled")
+    ])
+    .nullable(),
+  lastWorkflowRunId: z.string().min(1).nullable(),
+  lastError: z
+    .object({
+      code: z.string().min(1),
+      message: z.string().min(1),
+      details: z.string().optional()
+    })
+    .nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const workflowCandidatePackageSchema = z.object({
+  id: z.string().min(1),
+  workflowRunId: z.string().min(1),
+  sourceKind: z.enum(["highlight", "transcript-range"]),
+  title: z.string().min(1),
+  timelineId: z.string().min(1),
+  transcriptId: z.string().min(1).nullable(),
+  startUs: z.number().int().nonnegative(),
+  endUs: z.number().int().positive(),
+  label: z.string().min(1),
+  sourceSuggestionSetId: z.string().min(1).nullable(),
+  sourceSuggestionId: z.string().min(1).nullable(),
+  regionId: z.string().min(1).nullable(),
+  exportRunId: z.string().min(1).nullable(),
+  snapshotArtifactIds: z.array(z.string().min(1)),
+  createdAt: z.string().datetime()
+});
 
 const workflowInputFieldSchema = z.object({
   id: z.string().min(1),
@@ -405,7 +729,9 @@ export const workflowTemplateSchema = z.object({
     "captioned-export-v1",
     "smart-cleanup-v1",
     "short-clip-candidates-v1",
-    "batch-caption-export-v1"
+    "batch-caption-export-v1",
+    "social-candidate-package-v1",
+    "transcript-range-package-v1"
   ]),
   name: z.string().min(1),
   description: z.string().min(1),
@@ -906,6 +1232,190 @@ const BUILT_IN_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       }
     ],
     expectedOutputs: ["transcript", "caption-track", "subtitle", "export"]
+  }),
+  withSafetyProfile({
+    id: "social-candidate-package-v1",
+    name: "Social Candidate Package",
+    description:
+      "Generate highlight candidates, package them for review, and optionally capture snapshots and regions.",
+    version: 1,
+    batchMode: "single",
+    inputSchema: {
+      fields: [
+        { id: "clipId", label: "Clip", description: "Target clip for candidate packaging.", type: "clip-id", required: true },
+        {
+          id: "createRegions",
+          label: "Create Regions",
+          description: "Create regions for candidate review.",
+          type: "boolean",
+          required: false,
+          defaultValue: true
+        },
+        {
+          id: "captureSnapshots",
+          label: "Capture Snapshots",
+          description: "Capture review frames for generated candidates.",
+          type: "boolean",
+          required: false,
+          defaultValue: true
+        }
+      ]
+    },
+    steps: [
+      {
+        id: "transcribe",
+        kind: "transcribeClip",
+        name: "Transcribe clip",
+        description: "Generate transcript context for candidate packaging.",
+        dependsOn: [],
+        safetyClass: "high-impact",
+        mutability: "write",
+        execution: "job",
+        requiresApproval: false
+      },
+      {
+        id: "generate-highlights",
+        kind: "generateHighlights",
+        name: "Generate highlight suggestions",
+        description: "Generate highlight suggestions for review packaging.",
+        dependsOn: ["transcribe"],
+        safetyClass: "read-only",
+        mutability: "read",
+        execution: "job",
+        requiresApproval: false
+      },
+      {
+        id: "compile-candidate-packages",
+        kind: "compileCandidatePackages",
+        name: "Compile candidate packages",
+        description: "Convert highlight suggestions into reusable review/export packages.",
+        dependsOn: ["generate-highlights"],
+        safetyClass: "read-only",
+        mutability: "read",
+        execution: "sync",
+        requiresApproval: false
+      },
+      {
+        id: "create-regions",
+        kind: "createRegionsFromSuggestions",
+        name: "Create timeline regions",
+        description: "Create review regions for the candidate packages.",
+        dependsOn: ["compile-candidate-packages"],
+        safetyClass: "mutating",
+        mutability: "write",
+        execution: "sync",
+        requiresApproval: false,
+        runIf: {
+          inputKey: "createRegions",
+          truthy: true
+        }
+      },
+      {
+        id: "capture-snapshots",
+        kind: "captureExportSnapshot",
+        name: "Capture snapshots",
+        description: "Capture visual review frames for candidate packages.",
+        dependsOn: ["compile-candidate-packages"],
+        safetyClass: "high-impact",
+        mutability: "write",
+        execution: "sync",
+        requiresApproval: false,
+        runIf: {
+          inputKey: "captureSnapshots",
+          truthy: true
+        }
+      }
+    ],
+    expectedOutputs: ["suggestion-set", "candidate-package", "regions", "snapshot"]
+  }),
+  withSafetyProfile({
+    id: "transcript-range-package-v1",
+    name: "Transcript Range Package",
+    description:
+      "Turn a transcript range into an explicit, reviewable package for region creation or bounded export.",
+    version: 1,
+    batchMode: "single",
+    inputSchema: {
+      fields: [
+        {
+          id: "transcriptId",
+          label: "Transcript",
+          description: "Transcript that defines the packaging range.",
+          type: "transcript-id",
+          required: true
+        },
+        {
+          id: "startUs",
+          label: "Start (us)",
+          description: "Range start in microseconds.",
+          type: "integer",
+          required: true
+        },
+        {
+          id: "endUs",
+          label: "End (us)",
+          description: "Range end in microseconds.",
+          type: "integer",
+          required: true
+        },
+        {
+          id: "createRegion",
+          label: "Create Region",
+          description: "Create a timeline region from the selected transcript range.",
+          type: "boolean",
+          required: false,
+          defaultValue: true
+        },
+        {
+          id: "requireApproval",
+          label: "Require Approval",
+          description: "Pause before mutation or export.",
+          type: "boolean",
+          required: false,
+          defaultValue: true
+        }
+      ]
+    },
+    steps: [
+      {
+        id: "compile-range-selection",
+        kind: "compileTranscriptRangeSelection",
+        name: "Compile transcript range selection",
+        description: "Create a typed transcript-range selection record.",
+        dependsOn: [],
+        safetyClass: "read-only",
+        mutability: "read",
+        execution: "sync",
+        requiresApproval: false
+      },
+      {
+        id: "approval-before-range-mutation",
+        kind: "approvalCheckpoint",
+        name: "Approval before mutation",
+        description: "Require approval before turning the range into timeline state.",
+        dependsOn: ["compile-range-selection"],
+        safetyClass: "high-impact",
+        mutability: "write",
+        execution: "sync",
+        requiresApproval: true,
+        runIf: {
+          inputKey: "requireApproval",
+          truthy: true
+        }
+      },
+      {
+        id: "export-range-candidate",
+        kind: "compileCandidatePackages",
+        name: "Create candidate package",
+        description: "Create a reusable candidate package for the selected transcript range.",
+        dependsOn: ["compile-range-selection"],
+        safetyClass: "read-only",
+        mutability: "read",
+        execution: "sync",
+        requiresApproval: false
+      }
+    ],
+    expectedOutputs: ["transcript-range-selection", "candidate-package"]
   })
 ].map((template) => workflowTemplateSchema.parse(template));
 
@@ -932,8 +1442,26 @@ export function summarizeWorkflowRun(run: WorkflowRun): WorkflowRunSummary {
 }
 
 export function createWorkflowSessionSnapshot(input: WorkflowSessionSnapshot): WorkflowSessionSnapshot {
+  const candidatePackages = input.workflowRuns.flatMap((run) =>
+    run.artifacts.flatMap((artifact) =>
+      artifact.kind === "candidate-package"
+        ? (() => {
+            const parsed = workflowCandidatePackageSchema.safeParse({
+              ...artifact.metadata,
+              id: artifact.metadata.id ?? artifact.id,
+              workflowRunId: run.id,
+              createdAt: artifact.createdAt
+            });
+
+            return parsed.success ? [parsed.data] : [];
+          })()
+        : []
+    )
+  );
+
   return {
     ...input,
+    candidatePackages,
     workflowRuns: input.workflowRuns.map((run) => ({
       ...run,
       summary: summarizeWorkflowRun(run)

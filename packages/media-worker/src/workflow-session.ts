@@ -10,7 +10,6 @@ import {
   offsetCaptionTrackTiming,
   resolveWorkflowTemplate,
   summarizeWorkflowRun,
-  type BrandKit,
   type CaptionCommandFailure,
   type ExportCommandFailure,
   type ExportRequestInput,
@@ -19,8 +18,10 @@ import {
   type WorkflowApproval,
   type WorkflowArtifact,
   type WorkflowBatchItemRun,
+  type WorkflowCandidatePackage,
   type WorkflowCommand,
   type WorkflowCommandFailure,
+  type WorkflowProfile,
   type WorkflowRun,
   type WorkflowSessionSnapshot,
   type WorkflowStepDefinition,
@@ -56,6 +57,13 @@ import {
 import { getSuggestionSet } from "./smart-repository";
 import { executeSmartCommand } from "./smart-session";
 import {
+  createWorkflowProfile,
+  deleteWorkflowProfile,
+  getWorkflowProfile,
+  listWorkflowProfiles,
+  updateWorkflowProfile
+} from "./workflow-profile-store";
+import {
   createWorkflowRunRecord,
   getWorkflowRun,
   listPendingWorkflowApprovals,
@@ -66,6 +74,13 @@ import {
   upsertWorkflowBatchItemRecord,
   upsertWorkflowStepRunRecord
 } from "./workflow-repository";
+import {
+  createWorkflowSchedule,
+  deleteWorkflowSchedule,
+  listWorkflowSchedules,
+  setWorkflowScheduleEnabled,
+  updateWorkflowSchedule
+} from "./workflow-schedule-store";
 import { nowIso, WorkerError } from "./utils";
 
 type WorkflowFailureCode = WorkflowCommandFailure["error"]["code"];
@@ -127,20 +142,27 @@ async function writeWorkflowArtifactFile(
   return artifactPath;
 }
 
-function buildWorkflowSession(
+async function buildWorkflowSession(
   directory: string,
-  projectName: string,
-  brandKits: BrandKit[]
-): WorkflowSessionSnapshot {
+  projectName: string
+): Promise<WorkflowSessionSnapshot> {
   const paths = resolveProjectPaths(directory);
   const workflowRuns = listWorkflowRuns(paths.databasePath);
+  const [brandKits, workflowProfiles, schedules] = await Promise.all([
+    listBrandKits(),
+    listWorkflowProfiles(),
+    listWorkflowSchedules()
+  ]);
 
   return createWorkflowSessionSnapshot({
     directory: paths.directory,
     projectName,
     workflows: getBuiltInWorkflowTemplates(),
     brandKits,
+    workflowProfiles,
+    schedules,
     workflowRuns,
+    candidatePackages: [],
     pendingApprovals: listPendingWorkflowApprovals(paths.databasePath),
     activeWorkflowJobId:
       workflowRuns.find((run) =>
@@ -157,7 +179,7 @@ export async function getWorkflowSessionSnapshot(
   input: GetWorkflowSessionSnapshotInput
 ): Promise<WorkflowSessionSnapshot> {
   const { paths, document } = await loadAndMaybeMigrateProject(input.directory);
-  return buildWorkflowSession(paths.directory, document.project.name, await listBrandKits());
+  return buildWorkflowSession(paths.directory, document.project.name);
 }
 
 function instantiateStepRun(
@@ -214,6 +236,8 @@ function createWorkflowRunTemplate(input: {
   template: WorkflowTemplate;
   parentJobId: string;
   input: Record<string, unknown>;
+  profileId?: string | null;
+  scheduleId?: string | null;
 }): WorkflowRun {
   const timestamp = nowIso();
   const runId = randomUUID();
@@ -235,6 +259,8 @@ function createWorkflowRunTemplate(input: {
     templateId: input.template.id,
     templateVersion: input.template.version,
     projectDirectory: input.directory,
+    profileId: input.profileId ?? null,
+    scheduleId: input.scheduleId ?? null,
     status: "queued",
     parentJobId: input.parentJobId,
     input: input.input,
@@ -445,6 +471,105 @@ async function createWorkflowArtifact(
 
   upsertWorkflowArtifactRecord(input.databasePath, artifact);
   return artifact;
+}
+
+function createCandidatePackage(input: {
+  workflowRunId: string;
+  sourceKind: WorkflowCandidatePackage["sourceKind"];
+  title: string;
+  timelineId: string;
+  transcriptId: string | null;
+  startUs: number;
+  endUs: number;
+  label: string;
+  sourceSuggestionSetId?: string | null;
+  sourceSuggestionId?: string | null;
+  regionId?: string | null;
+  exportRunId?: string | null;
+  snapshotArtifactIds?: string[];
+}): WorkflowCandidatePackage {
+  return {
+    id: randomUUID(),
+    workflowRunId: input.workflowRunId,
+    sourceKind: input.sourceKind,
+    title: input.title,
+    timelineId: input.timelineId,
+    transcriptId: input.transcriptId,
+    startUs: input.startUs,
+    endUs: input.endUs,
+    label: input.label,
+    sourceSuggestionSetId: input.sourceSuggestionSetId ?? null,
+    sourceSuggestionId: input.sourceSuggestionId ?? null,
+    regionId: input.regionId ?? null,
+    exportRunId: input.exportRunId ?? null,
+    snapshotArtifactIds: input.snapshotArtifactIds ?? [],
+    createdAt: nowIso()
+  };
+}
+
+function artifactToCandidatePackage(
+  artifact: WorkflowArtifact,
+  workflowRunId: string
+): WorkflowCandidatePackage | null {
+  if (artifact.kind !== "candidate-package") {
+    return null;
+  }
+
+  const metadata =
+    artifact.metadata && typeof artifact.metadata === "object"
+      ? (artifact.metadata as Record<string, unknown>)
+      : null;
+
+  if (!metadata) {
+    return null;
+  }
+
+  const startUs = metadata.startUs;
+  const endUs = metadata.endUs;
+  const title = metadata.title;
+  const label = metadata.label;
+  const sourceKind = metadata.sourceKind;
+  const timelineId = metadata.timelineId;
+
+  if (
+    typeof startUs !== "number" ||
+    typeof endUs !== "number" ||
+    typeof title !== "string" ||
+    typeof label !== "string" ||
+    typeof sourceKind !== "string" ||
+    typeof timelineId !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: typeof metadata.id === "string" ? metadata.id : artifact.id,
+    workflowRunId,
+    sourceKind:
+      sourceKind === "transcript-range" ? "transcript-range" : "highlight",
+    title,
+    timelineId,
+    transcriptId:
+      typeof metadata.transcriptId === "string" ? metadata.transcriptId : null,
+    startUs,
+    endUs,
+    label,
+    sourceSuggestionSetId:
+      typeof metadata.sourceSuggestionSetId === "string"
+        ? metadata.sourceSuggestionSetId
+        : null,
+    sourceSuggestionId:
+      typeof metadata.sourceSuggestionId === "string"
+        ? metadata.sourceSuggestionId
+        : null,
+    regionId: typeof metadata.regionId === "string" ? metadata.regionId : null,
+    exportRunId:
+      typeof metadata.exportRunId === "string" ? metadata.exportRunId : null,
+    snapshotArtifactIds: Array.isArray(metadata.snapshotArtifactIds)
+      ? metadata.snapshotArtifactIds.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    createdAt: typeof metadata.createdAt === "string" ? metadata.createdAt : artifact.createdAt
+  };
 }
 
 function createApproval(
@@ -719,6 +844,35 @@ async function executeWorkflowStep(input: {
       const request: ExportRequestInput = {
         timelineId: document.timeline.id,
         presetId,
+        brandPackaging: brandKit
+          ? {
+              introAsset:
+                brandKit.introAsset.kind === "file" && brandKit.introAsset.absolutePath
+                  ? {
+                      absolutePath: brandKit.introAsset.absolutePath,
+                      label: brandKit.introAsset.label
+                    }
+                  : null,
+              outroAsset:
+                brandKit.outroAsset.kind === "file" && brandKit.outroAsset.absolutePath
+                  ? {
+                      absolutePath: brandKit.outroAsset.absolutePath,
+                      label: brandKit.outroAsset.label
+                    }
+                  : null,
+              watermarkAsset:
+                brandKit.watermarkAsset.kind === "file" &&
+                brandKit.watermarkAsset.absolutePath
+                  ? {
+                      absolutePath: brandKit.watermarkAsset.absolutePath,
+                      label: brandKit.watermarkAsset.label,
+                      position: brandKit.watermarkAsset.position,
+                      marginPx: brandKit.watermarkAsset.marginPx,
+                      opacity: brandKit.watermarkAsset.opacity
+                    }
+                  : null
+            }
+          : null,
         target: {
           kind: "range",
           startUs: clip.timelineStartUs,
@@ -908,6 +1062,182 @@ async function executeWorkflowStep(input: {
           clipId,
           highlightSuggestionSetId: result.result.suggestionSet.id,
           childJobId: result.result.run.jobId
+        }
+      };
+    }
+    case "compileCandidatePackages": {
+      const suggestionSetId = context.highlightSuggestionSetId;
+
+      if (suggestionSetId) {
+        const suggestionSet = getSuggestionSet(
+          resolveProjectPaths(directory).databasePath,
+          suggestionSetId
+        );
+
+        if (!suggestionSet) {
+          throw new WorkerError(
+            "SUGGESTION_SET_NOT_FOUND",
+            `Suggestion set ${suggestionSetId} could not be found.`
+          );
+        }
+
+        const candidatePackages = suggestionSet.items.slice(0, 5).map((suggestion, index) =>
+          createCandidatePackage({
+            workflowRunId: run.id,
+            sourceKind: "highlight",
+            title: `Candidate ${index + 1}: ${suggestion.label}`,
+            timelineId: document.timeline.id,
+            transcriptId: context.transcriptId,
+            startUs: suggestion.target.startUs,
+            endUs: suggestion.target.endUs,
+            label: suggestion.label,
+            sourceSuggestionSetId: suggestionSetId,
+            sourceSuggestionId: suggestion.id
+          })
+        );
+
+        for (const candidatePackage of candidatePackages) {
+          await createWorkflowArtifact({
+            databasePath: resolveProjectPaths(directory).databasePath,
+            workflowRunId: run.id,
+            stepRunId: stepRun.id,
+            batchItemRunId: stepRun.batchItemRunId,
+            kind: "candidate-package",
+            label: candidatePackage.label,
+            metadata: { ...candidatePackage }
+          });
+        }
+
+        return {
+          outputSummary: {
+            clipId,
+            candidatePackageIds: candidatePackages.map((entry) => entry.id),
+            sourceSuggestionSetId: suggestionSetId
+          }
+        };
+      }
+
+      const transcriptId =
+        typeof run.input.transcriptId === "string"
+          ? run.input.transcriptId
+          : context.transcriptId;
+      const startUs = Number(run.input.startUs);
+      const endUs = Number(run.input.endUs);
+
+      if (
+        !transcriptId ||
+        !Number.isFinite(startUs) ||
+        !Number.isFinite(endUs) ||
+        startUs < 0 ||
+        endUs <= startUs
+      ) {
+        throw new WorkerError(
+          "WORKFLOW_INVALID_INPUT",
+          "Candidate packaging requires either highlight suggestions or a valid transcript range."
+        );
+      }
+
+      const transcript = document.transcripts.items.find((entry) => entry.id === transcriptId);
+
+      if (!transcript) {
+        throw new WorkerError(
+          "TRANSCRIPT_NOT_FOUND",
+          `Transcript ${transcriptId} could not be found.`
+        );
+      }
+
+      const candidatePackage = createCandidatePackage({
+        workflowRunId: run.id,
+        sourceKind: "transcript-range",
+        title: "Transcript range package",
+        timelineId: transcript.timelineId ?? document.timeline.id,
+        transcriptId,
+        startUs,
+        endUs,
+        label: transcript.segments
+          .filter((segment) => segment.startUs < endUs && segment.endUs > startUs)
+          .slice(0, 2)
+          .map((segment) => segment.text)
+          .join(" ")
+          .trim() || "Transcript range"
+      });
+
+      await createWorkflowArtifact({
+        databasePath: resolveProjectPaths(directory).databasePath,
+        workflowRunId: run.id,
+        stepRunId: stepRun.id,
+        batchItemRunId: stepRun.batchItemRunId,
+        kind: "candidate-package",
+        label: candidatePackage.label,
+        metadata: { ...candidatePackage }
+      });
+
+      return {
+        outputSummary: {
+          transcriptId,
+          candidatePackageIds: [candidatePackage.id]
+        }
+      };
+    }
+    case "compileTranscriptRangeSelection": {
+      const transcriptId = typeof run.input.transcriptId === "string" ? run.input.transcriptId : null;
+      const startUs = Number(run.input.startUs);
+      const endUs = Number(run.input.endUs);
+
+      if (
+        !transcriptId ||
+        !Number.isFinite(startUs) ||
+        !Number.isFinite(endUs) ||
+        startUs < 0 ||
+        endUs <= startUs
+      ) {
+        throw new WorkerError(
+          "WORKFLOW_INVALID_INPUT",
+          "Transcript range packaging requires transcriptId, startUs, and endUs."
+        );
+      }
+
+      const transcript = document.transcripts.items.find((entry) => entry.id === transcriptId);
+
+      if (!transcript) {
+        throw new WorkerError(
+          "TRANSCRIPT_NOT_FOUND",
+          `Transcript ${transcriptId} could not be found.`
+        );
+      }
+
+      const selection = {
+        id: randomUUID(),
+        transcriptId,
+        timelineId: transcript.timelineId ?? document.timeline.id,
+        startUs,
+        endUs,
+        label:
+          transcript.segments
+            .filter((segment) => segment.startUs < endUs && segment.endUs > startUs)
+            .slice(0, 2)
+            .map((segment) => segment.text)
+            .join(" ")
+            .trim() || "Transcript range",
+        createdAt: nowIso()
+      };
+
+      await createWorkflowArtifact({
+        databasePath: resolveProjectPaths(directory).databasePath,
+        workflowRunId: run.id,
+        stepRunId: stepRun.id,
+        batchItemRunId: stepRun.batchItemRunId,
+        kind: "transcript-range-selection",
+        label: selection.label,
+        metadata: selection
+      });
+
+      return {
+        outputSummary: {
+          transcriptId,
+          transcriptRangeSelectionId: selection.id,
+          startUs,
+          endUs
         }
       };
     }
@@ -1108,6 +1438,83 @@ async function executeWorkflowStep(input: {
         outputSummary: {
           clipId,
           snapshotPaths: captured
+        }
+      };
+    }
+    case "exportCandidatePackage": {
+      const candidatePackageId =
+        typeof run.input.candidatePackageId === "string" ? run.input.candidatePackageId : null;
+      const candidateArtifacts = run.artifacts
+        .map((artifact) => artifactToCandidatePackage(artifact, run.id))
+        .filter((entry): entry is WorkflowCandidatePackage => entry !== null);
+      const candidatePackage =
+        (candidatePackageId
+          ? candidateArtifacts.find((entry) => entry.id === candidatePackageId)
+          : candidateArtifacts[0]) ?? null;
+
+      if (!candidatePackage) {
+        throw new WorkerError(
+          "WORKFLOW_CANDIDATE_PACKAGE_NOT_FOUND",
+          "No candidate package is available for export."
+        );
+      }
+
+      const presetId =
+        typeof run.input.exportPresetId === "string"
+          ? (run.input.exportPresetId as ExportRequestInput["presetId"])
+          : document.settings.exports.defaultPreset;
+      const result = await executeExportCommand({
+        directory,
+        command: {
+          type: "StartExport",
+          request: {
+            timelineId: candidatePackage.timelineId,
+            presetId,
+            target: {
+              kind: "range",
+              startUs: candidatePackage.startUs,
+              endUs: candidatePackage.endUs,
+              label: candidatePackage.label
+            }
+          }
+        }
+      });
+
+      if (!result.result.ok) {
+        const failure = result.result as ExportCommandFailure;
+        throw new WorkerError(failure.error.code, failure.error.message, failure.error.details);
+      }
+
+      if (result.result.commandType !== "StartExport") {
+        throw new WorkerError("WORKFLOW_FAILED", "Unexpected candidate export workflow result.");
+      }
+
+      appendChildJobId(
+        resolveProjectPaths(directory).databasePath,
+        run.parentJobId,
+        result.result.exportRun.jobId
+      );
+      const exportRun = await waitForExportCompletion(directory, result.result.exportRun.id);
+      await createWorkflowArtifact({
+        databasePath: resolveProjectPaths(directory).databasePath,
+        workflowRunId: run.id,
+        stepRunId: stepRun.id,
+        batchItemRunId: stepRun.batchItemRunId,
+        kind: "candidate-export",
+        label: candidatePackage.label,
+        path: exportRun.outputPath,
+        metadata: {
+          candidatePackageId: candidatePackage.id,
+          exportRunId: exportRun.id,
+          presetId: exportRun.presetId
+        }
+      });
+
+      return {
+        outputSummary: {
+          candidatePackageId: candidatePackage.id,
+          exportRunId: exportRun.id,
+          outputPath: exportRun.outputPath
         }
       };
     }
@@ -1547,10 +1954,32 @@ function validateWorkflowInput(template: WorkflowTemplate, input: Record<string,
   }
 }
 
+function resolveWorkflowProfileInput(
+  profile: WorkflowProfile,
+  inputOverrides?: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...profile.defaultInputs,
+    ...(inputOverrides ?? {}),
+    brandKitId:
+      inputOverrides?.brandKitId !== undefined
+        ? inputOverrides.brandKitId
+        : profile.defaultBrandKitId ?? profile.defaultInputs.brandKitId,
+    exportPresetId:
+      inputOverrides?.exportPresetId !== undefined
+        ? inputOverrides.exportPresetId
+        : profile.defaultExportPresetId ?? profile.defaultInputs.exportPresetId
+  };
+}
+
 async function createAndQueueWorkflowRun(
   directory: string,
   template: WorkflowTemplate,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  options?: {
+    profileId?: string | null;
+    scheduleId?: string | null;
+  }
 ): Promise<WorkflowRun> {
   validateWorkflowInput(template, input);
   const paths = resolveProjectPaths(directory);
@@ -1570,7 +1999,9 @@ async function createAndQueueWorkflowRun(
     directory: paths.directory,
     template,
     parentJobId: jobId,
-    input
+    input,
+    profileId: options?.profileId ?? null,
+    scheduleId: options?.scheduleId ?? null
   });
 
   createWorkflowRunRecord(paths.databasePath, run);
@@ -1604,7 +2035,7 @@ export async function executeWorkflowCommand(
 
         if (!template) {
           return {
-            snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
             result: createFailure(command, "WORKFLOW_NOT_FOUND", `Workflow ${command.templateId} could not be found.`)
           };
         }
@@ -1612,7 +2043,7 @@ export async function executeWorkflowCommand(
         const workflowRun = await createAndQueueWorkflowRun(paths.directory, template, command.input);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "StartWorkflow",
@@ -1626,7 +2057,7 @@ export async function executeWorkflowCommand(
 
         if (!template) {
           return {
-            snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
             result: createFailure(command, "WORKFLOW_NOT_FOUND", `Workflow ${command.templateId} could not be found.`)
           };
         }
@@ -1634,10 +2065,58 @@ export async function executeWorkflowCommand(
         const workflowRun = await createAndQueueWorkflowRun(paths.directory, template, command.input);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "StartBatchWorkflow",
+            workflowRun,
+            queued: activeWorkflowRuns.has(paths.directory)
+          }
+        };
+      }
+      case "RunWorkflowProfile": {
+        const profile = await getWorkflowProfile(command.profileId);
+
+        if (!profile) {
+          return {
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+            result: createFailure(
+              command,
+              "WORKFLOW_PROFILE_NOT_FOUND",
+              `Workflow profile ${command.profileId} could not be found.`
+            )
+          };
+        }
+
+        const template = resolveWorkflowTemplate(profile.templateId);
+
+        if (!template) {
+          return {
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+            result: createFailure(
+              command,
+              "WORKFLOW_NOT_FOUND",
+              `Workflow ${profile.templateId} could not be found.`
+            )
+          };
+        }
+
+        const workflowRun = await createAndQueueWorkflowRun(
+          paths.directory,
+          template,
+          resolveWorkflowProfileInput(profile, command.inputOverrides),
+          {
+            profileId: profile.id,
+            scheduleId: command.invocation?.kind === "schedule" ? command.invocation.scheduleId ?? null : null
+          }
+        );
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "RunWorkflowProfile",
+            profile,
             workflowRun,
             queued: activeWorkflowRuns.has(paths.directory)
           }
@@ -1648,7 +2127,7 @@ export async function executeWorkflowCommand(
 
         if (!run) {
           return {
-            snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
             result: createFailure(command, "WORKFLOW_RUN_NOT_FOUND", `Workflow run ${command.workflowRunId} could not be found.`)
           };
         }
@@ -1666,7 +2145,7 @@ export async function executeWorkflowCommand(
         });
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "CancelWorkflowRun",
@@ -1679,7 +2158,7 @@ export async function executeWorkflowCommand(
 
         if (!run) {
           return {
-            snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
             result: createFailure(command, "WORKFLOW_RUN_NOT_FOUND", `Workflow run ${command.workflowRunId} could not be found.`)
           };
         }
@@ -1698,7 +2177,7 @@ export async function executeWorkflowCommand(
         scheduleWorkflowRun(paths.directory);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "ResumeWorkflowRun",
@@ -1712,7 +2191,7 @@ export async function executeWorkflowCommand(
 
         if (!run || !stepRun) {
           return {
-            snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
             result: createFailure(command, "WORKFLOW_STEP_NOT_FOUND", `Workflow step ${command.stepRunId} could not be found.`)
           };
         }
@@ -1741,7 +2220,7 @@ export async function executeWorkflowCommand(
         scheduleWorkflowRun(paths.directory);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "RetryWorkflowStep",
@@ -1755,7 +2234,7 @@ export async function executeWorkflowCommand(
 
         if (!run || !approval) {
           return {
-            snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
             result: createFailure(command, "WORKFLOW_APPROVAL_NOT_FOUND", `Workflow approval ${command.approvalId} could not be found.`)
           };
         }
@@ -1774,7 +2253,7 @@ export async function executeWorkflowCommand(
         scheduleWorkflowRun(paths.directory);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "ApproveWorkflowStep",
@@ -1788,7 +2267,7 @@ export async function executeWorkflowCommand(
 
         if (!run || !approval) {
           return {
-            snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
             result: createFailure(command, "WORKFLOW_APPROVAL_NOT_FOUND", `Workflow approval ${command.approvalId} could not be found.`)
           };
         }
@@ -1815,7 +2294,7 @@ export async function executeWorkflowCommand(
         });
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "RejectWorkflowStep",
@@ -1827,7 +2306,7 @@ export async function executeWorkflowCommand(
         const brandKit = await createUserBrandKit(command.brandKit);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "CreateBrandKit",
@@ -1839,7 +2318,7 @@ export async function executeWorkflowCommand(
         const brandKit = await updateUserBrandKit(command.brandKitId, command.brandKit);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "UpdateBrandKit",
@@ -1853,7 +2332,7 @@ export async function executeWorkflowCommand(
 
           if (!brandKit) {
             return {
-              snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+              snapshot: await buildWorkflowSession(paths.directory, document.project.name),
               result: createFailure(command, "BRAND_KIT_NOT_FOUND", `Brand kit ${command.brandKitId} could not be found.`)
             };
           }
@@ -1862,11 +2341,230 @@ export async function executeWorkflowCommand(
         await updateDefaultBrandKitId(paths.directory, command.brandKitId);
 
         return {
-          snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
           result: {
             ok: true,
             commandType: "SetDefaultBrandKit",
             brandKitId: command.brandKitId
+          }
+        };
+      }
+      case "CreateWorkflowProfile": {
+        const profile = await createWorkflowProfile(command.profile);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "CreateWorkflowProfile",
+            profileId: profile.id
+          }
+        };
+      }
+      case "UpdateWorkflowProfile": {
+        const profile = await updateWorkflowProfile(command.profileId, command.profile);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "UpdateWorkflowProfile",
+            profileId: profile.id
+          }
+        };
+      }
+      case "DeleteWorkflowProfile": {
+        await deleteWorkflowProfile(command.profileId);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "DeleteWorkflowProfile",
+            profileId: command.profileId
+          }
+        };
+      }
+      case "CreateWorkflowSchedule": {
+        const profile = await getWorkflowProfile(command.schedule.workflowProfileId);
+
+        if (!profile) {
+          return {
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+            result: createFailure(
+              command,
+              "WORKFLOW_PROFILE_NOT_FOUND",
+              `Workflow profile ${command.schedule.workflowProfileId} could not be found.`
+            )
+          };
+        }
+
+        const schedule = await createWorkflowSchedule(command.schedule);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "CreateWorkflowSchedule",
+            scheduleId: schedule.id
+          }
+        };
+      }
+      case "UpdateWorkflowSchedule": {
+        const profile = await getWorkflowProfile(command.schedule.workflowProfileId);
+
+        if (!profile) {
+          return {
+            snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+            result: createFailure(
+              command,
+              "WORKFLOW_PROFILE_NOT_FOUND",
+              `Workflow profile ${command.schedule.workflowProfileId} could not be found.`
+            )
+          };
+        }
+
+        const schedule = await updateWorkflowSchedule(command.scheduleId, command.schedule);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "UpdateWorkflowSchedule",
+            scheduleId: schedule.id
+          }
+        };
+      }
+      case "PauseWorkflowSchedule": {
+        const schedule = await setWorkflowScheduleEnabled(command.scheduleId, false);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "PauseWorkflowSchedule",
+            scheduleId: schedule.id
+          }
+        };
+      }
+      case "ResumeWorkflowSchedule": {
+        const schedule = await setWorkflowScheduleEnabled(command.scheduleId, true);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "ResumeWorkflowSchedule",
+            scheduleId: schedule.id
+          }
+        };
+      }
+      case "DeleteWorkflowSchedule": {
+        await deleteWorkflowSchedule(command.scheduleId);
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "DeleteWorkflowSchedule",
+            scheduleId: command.scheduleId
+          }
+        };
+      }
+      case "ExportCandidatePackage": {
+        const workflowSnapshot = await buildWorkflowSession(paths.directory, document.project.name);
+        const candidatePackage =
+          workflowSnapshot.candidatePackages.find(
+            (entry) => entry.id === command.candidatePackageId
+          ) ?? null;
+
+        if (!candidatePackage) {
+          return {
+            snapshot: workflowSnapshot,
+            result: createFailure(
+              command,
+              "WORKFLOW_CANDIDATE_PACKAGE_NOT_FOUND",
+              `Candidate package ${command.candidatePackageId} could not be found.`
+            )
+          };
+        }
+
+        const presetId =
+          (command.presetId as ExportRequestInput["presetId"] | undefined) ??
+          document.settings.exports.defaultPreset;
+        const exportResult = await executeExportCommand({
+          directory: paths.directory,
+          command: {
+            type: "StartExport",
+            request: {
+              timelineId: candidatePackage.timelineId,
+              presetId,
+              target: {
+                kind: "range",
+                startUs: candidatePackage.startUs,
+                endUs: candidatePackage.endUs,
+                label: candidatePackage.label
+              }
+            }
+          }
+        });
+
+        if (!exportResult.result.ok) {
+          const failure = exportResult.result as ExportCommandFailure;
+          return {
+            snapshot: workflowSnapshot,
+            result: createFailure(command, "WORKFLOW_FAILED", failure.error.message, failure.error.details)
+          };
+        }
+
+        if (exportResult.result.commandType !== "StartExport") {
+          return {
+            snapshot: workflowSnapshot,
+            result: createFailure(command, "WORKFLOW_FAILED", "Unexpected candidate export result.")
+          };
+        }
+
+        const updatedCandidatePackage: WorkflowCandidatePackage = {
+          ...candidatePackage,
+          exportRunId: exportResult.result.exportRun.id
+        };
+
+        const workflowRun = getWorkflowRun(paths.databasePath, candidatePackage.workflowRunId);
+        const candidateArtifact = workflowRun?.artifacts.find(
+          (artifact) =>
+            artifact.kind === "candidate-package" &&
+            (artifact.metadata.id === candidatePackage.id ||
+              artifact.id === candidatePackage.id)
+        );
+
+        if (candidateArtifact) {
+          upsertWorkflowArtifactRecord(paths.databasePath, {
+            ...candidateArtifact,
+            metadata: { ...updatedCandidatePackage }
+          });
+          await createWorkflowArtifact({
+            databasePath: paths.databasePath,
+            workflowRunId: candidatePackage.workflowRunId,
+            stepRunId: candidateArtifact.stepRunId,
+            batchItemRunId: candidateArtifact.batchItemRunId,
+            kind: "candidate-export",
+            label: candidatePackage.label,
+            path: exportResult.result.exportRun.outputPath,
+            metadata: {
+              candidatePackageId: candidatePackage.id,
+              exportRunId: exportResult.result.exportRun.id,
+              presetId
+            }
+          });
+        }
+
+        return {
+          snapshot: await buildWorkflowSession(paths.directory, document.project.name),
+          result: {
+            ok: true,
+            commandType: "ExportCandidatePackage",
+            candidatePackage: updatedCandidatePackage,
+            exportRunId: exportResult.result.exportRun.id
           }
         };
       }
@@ -1878,7 +2576,7 @@ export async function executeWorkflowCommand(
         : new WorkerError("WORKFLOW_FAILED", error instanceof Error ? error.message : "Workflow execution failed.");
 
     return {
-      snapshot: buildWorkflowSession(paths.directory, document.project.name, await listBrandKits()),
+      snapshot: await buildWorkflowSession(paths.directory, document.project.name),
       result: createFailure(
         command,
         (workerError.code as WorkflowFailureCode) ?? "WORKFLOW_FAILED",

@@ -24,9 +24,12 @@ import type {
   Timeline,
   WorkflowApproval,
   WorkflowArtifact,
+  WorkflowCandidatePackage,
   WorkflowCommand,
   WorkflowCommandResult,
+  WorkflowProfile,
   WorkflowRun,
+  WorkflowSchedule,
   WorkflowSessionSnapshot as DomainWorkflowSessionSnapshot,
   WorkflowTemplate
 } from "@clawcut/domain";
@@ -399,6 +402,16 @@ export const LOCAL_API_COMMAND_NAMES = [
   "workflow.retryStep",
   "workflow.approveStep",
   "workflow.rejectStep",
+  "workflow.exportCandidatePackage",
+  "workflowProfiles.create",
+  "workflowProfiles.update",
+  "workflowProfiles.delete",
+  "workflowProfiles.run",
+  "schedules.create",
+  "schedules.update",
+  "schedules.pause",
+  "schedules.resume",
+  "schedules.delete",
   "brandKits.create",
   "brandKits.update",
   "brandKits.setDefault",
@@ -436,6 +449,12 @@ export const LOCAL_API_QUERY_NAMES = [
   "workflow.approvals",
   "workflow.artifacts",
   "workflow.artifact",
+  "workflow.candidatePackages",
+  "workflow.candidatePackage",
+  "workflowProfiles.list",
+  "workflowProfiles.inspect",
+  "schedules.list",
+  "schedules.inspect",
   "brandKits.list",
   "diagnostics.session",
   "jobs.list",
@@ -527,10 +546,25 @@ export interface LocalApiWorkflowRunGetInput {
   workflowRunId: string;
 }
 
+export interface LocalApiWorkflowProfileGetInput {
+  directory: string;
+  profileId: string;
+}
+
+export interface LocalApiWorkflowScheduleGetInput {
+  directory: string;
+  scheduleId: string;
+}
+
 export interface LocalApiWorkflowArtifactGetInput {
   directory: string;
   workflowRunId: string;
   artifactId: string;
+}
+
+export interface LocalApiWorkflowCandidatePackageGetInput {
+  directory: string;
+  candidatePackageId: string;
 }
 
 export interface LocalApiSmartSuggestionSetGetInput {
@@ -642,6 +676,16 @@ export interface LocalApiCommandInputMap {
   "workflow.retryStep": LocalApiWorkflowOperationInput<"RetryWorkflowStep">;
   "workflow.approveStep": LocalApiWorkflowOperationInput<"ApproveWorkflowStep">;
   "workflow.rejectStep": LocalApiWorkflowOperationInput<"RejectWorkflowStep">;
+  "workflow.exportCandidatePackage": LocalApiWorkflowOperationInput<"ExportCandidatePackage">;
+  "workflowProfiles.create": LocalApiWorkflowOperationInput<"CreateWorkflowProfile">;
+  "workflowProfiles.update": LocalApiWorkflowOperationInput<"UpdateWorkflowProfile">;
+  "workflowProfiles.delete": LocalApiWorkflowOperationInput<"DeleteWorkflowProfile">;
+  "workflowProfiles.run": LocalApiWorkflowOperationInput<"RunWorkflowProfile">;
+  "schedules.create": LocalApiWorkflowOperationInput<"CreateWorkflowSchedule">;
+  "schedules.update": LocalApiWorkflowOperationInput<"UpdateWorkflowSchedule">;
+  "schedules.pause": LocalApiWorkflowOperationInput<"PauseWorkflowSchedule">;
+  "schedules.resume": LocalApiWorkflowOperationInput<"ResumeWorkflowSchedule">;
+  "schedules.delete": LocalApiWorkflowOperationInput<"DeleteWorkflowSchedule">;
   "brandKits.create": LocalApiWorkflowOperationInput<"CreateBrandKit">;
   "brandKits.update": LocalApiWorkflowOperationInput<"UpdateBrandKit">;
   "brandKits.setDefault": LocalApiWorkflowOperationInput<"SetDefaultBrandKit">;
@@ -711,6 +755,16 @@ export interface LocalApiCommandResultMap {
   "workflow.retryStep": ExecuteWorkflowCommandResult;
   "workflow.approveStep": ExecuteWorkflowCommandResult;
   "workflow.rejectStep": ExecuteWorkflowCommandResult;
+  "workflow.exportCandidatePackage": ExecuteWorkflowCommandResult;
+  "workflowProfiles.create": ExecuteWorkflowCommandResult;
+  "workflowProfiles.update": ExecuteWorkflowCommandResult;
+  "workflowProfiles.delete": ExecuteWorkflowCommandResult;
+  "workflowProfiles.run": ExecuteWorkflowCommandResult;
+  "schedules.create": ExecuteWorkflowCommandResult;
+  "schedules.update": ExecuteWorkflowCommandResult;
+  "schedules.pause": ExecuteWorkflowCommandResult;
+  "schedules.resume": ExecuteWorkflowCommandResult;
+  "schedules.delete": ExecuteWorkflowCommandResult;
   "brandKits.create": ExecuteWorkflowCommandResult;
   "brandKits.update": ExecuteWorkflowCommandResult;
   "brandKits.setDefault": ExecuteWorkflowCommandResult;
@@ -749,6 +803,12 @@ export interface LocalApiQueryInputMap {
   "workflow.approvals": GetWorkflowSessionSnapshotInput;
   "workflow.artifacts": LocalApiWorkflowRunGetInput;
   "workflow.artifact": LocalApiWorkflowArtifactGetInput;
+  "workflow.candidatePackages": GetWorkflowSessionSnapshotInput;
+  "workflow.candidatePackage": LocalApiWorkflowCandidatePackageGetInput;
+  "workflowProfiles.list": GetWorkflowSessionSnapshotInput;
+  "workflowProfiles.inspect": LocalApiWorkflowProfileGetInput;
+  "schedules.list": GetWorkflowSessionSnapshotInput;
+  "schedules.inspect": LocalApiWorkflowScheduleGetInput;
   "brandKits.list": GetWorkflowSessionSnapshotInput;
   "diagnostics.session": GetDiagnosticsSessionSnapshotInput;
   "jobs.list": GetProjectSnapshotInput;
@@ -784,6 +844,12 @@ export interface LocalApiQueryResultMap {
   "workflow.approvals": WorkflowApproval[];
   "workflow.artifacts": WorkflowArtifact[];
   "workflow.artifact": WorkflowArtifact | null;
+  "workflow.candidatePackages": WorkflowCandidatePackage[];
+  "workflow.candidatePackage": WorkflowCandidatePackage | null;
+  "workflowProfiles.list": WorkflowProfile[];
+  "workflowProfiles.inspect": WorkflowProfile | null;
+  "schedules.list": WorkflowSchedule[];
+  "schedules.inspect": WorkflowSchedule | null;
   "brandKits.list": BrandKit[];
   "diagnostics.session": DiagnosticsSessionSnapshot;
   "jobs.list": Job[];

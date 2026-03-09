@@ -63,6 +63,8 @@ describe("control schema", () => {
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.open_project");
     expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflows");
     expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.start_workflow");
+    expect(manifest.toolExposure.defaultEnabled).toContain("clawcut.list_workflow_profiles");
+    expect(manifest.toolExposure.optionalAllowlist).toContain("clawcut.run_workflow_profile");
   });
 
   test("maps OpenClaw preview frame capture requests to the lighter frame reference by default", () => {
@@ -89,6 +91,27 @@ describe("control schema", () => {
         directory: "/tmp/project",
         suggestionSetId: "suggestion-set-1",
         suggestionId: "suggestion-1"
+      }
+    });
+  });
+
+  test("maps social candidate generation to the built-in workflow template start", () => {
+    const invocation = mapOpenClawToolInvocation("clawcut.generate_social_candidates", {
+      directory: "/tmp/project",
+      input: {
+        clipId: "clip-1"
+      }
+    });
+
+    expect(invocation).toEqual({
+      operationType: "command",
+      name: "workflow.start",
+      input: {
+        directory: "/tmp/project",
+        templateId: "social-candidate-package-v1",
+        input: {
+          clipId: "clip-1"
+        }
       }
     });
   });
@@ -128,7 +151,15 @@ describe("control schema", () => {
         ?.availableByDefault
     ).toBe(true);
     expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.list_workflow_profiles")
+        ?.availableByDefault
+    ).toBe(true);
+    expect(
       OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.start_workflow")
+        ?.availableByDefault
+    ).toBe(false);
+    expect(
+      OPENCLAW_TOOL_DEFINITIONS.find((tool) => tool.name === "clawcut.run_workflow_profile")
         ?.availableByDefault
     ).toBe(false);
   });

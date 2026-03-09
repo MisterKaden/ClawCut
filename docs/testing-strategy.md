@@ -52,6 +52,9 @@ Current worker coverage includes:
 - parent workflow job and child job linkage
 - batch workflow partial-failure behavior
 - local brand-kit store persistence and project default assignment
+- workflow profile persistence and default-input resolution
+- workflow schedule persistence and due-run behavior
+- candidate-package generation and export behavior
 
 These tests intentionally exercise the worker-owned services instead of reproducing logic inside test helpers.
 
@@ -74,6 +77,8 @@ Current coverage includes:
 - preview frame-reference queries
 - diagnostics session snapshots and request-log metadata
 - workflow and brand-kit operation mapping
+- workflow profile and schedule operation mapping
+- candidate-package query/export mapping
 
 The goal is to keep OpenClaw and local automation on the same typed contract the UI already uses.
 
@@ -115,8 +120,11 @@ Current smoke coverage includes:
 17. run `smart-cleanup-v1` through approval, approval-aware resume, application, and undo verification
 18. run `batch-caption-export-v1` over multiple clip targets
 19. inspect workflow artifacts/results through the integration boundary
-20. inspect diagnostics/recovery visibility in-app
-21. capture a screenshot artifact
+20. create and run a reusable workflow profile
+21. create, pause, and resume a local workflow schedule
+22. run Stage 11 social candidate packaging and export one candidate package
+23. inspect diagnostics/recovery visibility in-app
+24. capture a screenshot artifact
 
 The smoke path is intentionally fixture-driven and deterministic:
 
@@ -155,6 +163,8 @@ Current budgeted paths include:
 - fixture transcription
 - workflow session snapshot
 
+Stage 11 does not add a new benchmark family yet; the existing workflow snapshot and export compile budgets continue to cover the new profile/schedule/brand-packaging layers indirectly.
+
 The thresholds are intentionally generous enough for CI stability while still catching obvious performance regressions.
 
 ## Verification posture per stage
@@ -173,5 +183,5 @@ When workflow or transport architecture changes, update tests and smoke in the s
 ## Current limitations
 
 - Smoke is broad and therefore slower than unit/integration tests.
-- Workflow smoke currently validates built-in templates only.
+- Workflow smoke now validates built-in templates plus reusable profiles and schedules, but still inside one project.
 - The SSE stream is lightweight and polling-backed, so integration tests focus on envelope shape and emitted topics rather than strict event timing guarantees.

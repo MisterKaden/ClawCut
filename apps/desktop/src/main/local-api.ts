@@ -904,6 +904,15 @@ export class LocalApiController {
       runs: Awaited<
         ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
       >["workflowRuns"];
+      profiles: Awaited<
+        ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
+      >["workflowProfiles"];
+      schedules: Awaited<
+        ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
+      >["schedules"];
+      candidatePackages: Awaited<
+        ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
+      >["candidatePackages"];
       approvals: Awaited<
         ReturnType<LocalApiWorkerGateway["getWorkflowSessionSnapshot"]>
       >["pendingApprovals"];
@@ -940,6 +949,9 @@ export class LocalApiController {
       },
       workflows: {
         runs: workflowSnapshot?.workflowRuns ?? [],
+        profiles: workflowSnapshot?.workflowProfiles ?? [],
+        schedules: workflowSnapshot?.schedules ?? [],
+        candidatePackages: workflowSnapshot?.candidatePackages ?? [],
         approvals: workflowSnapshot?.pendingApprovals ?? [],
         activeWorkflowJobId: workflowSnapshot?.activeWorkflowJobId ?? null
       }
@@ -1220,11 +1232,21 @@ export class LocalApiController {
       }
       case "workflow.start":
       case "workflow.startBatch":
+      case "workflow.exportCandidatePackage":
       case "workflow.cancelRun":
       case "workflow.resumeRun":
       case "workflow.retryStep":
       case "workflow.approveStep":
       case "workflow.rejectStep":
+      case "workflowProfiles.create":
+      case "workflowProfiles.update":
+      case "workflowProfiles.delete":
+      case "workflowProfiles.run":
+      case "schedules.create":
+      case "schedules.update":
+      case "schedules.pause":
+      case "schedules.resume":
+      case "schedules.delete":
       case "brandKits.create":
       case "brandKits.update":
       case "brandKits.setDefault": {
@@ -1241,16 +1263,36 @@ export class LocalApiController {
                 ? "StartWorkflow"
                 : name === "workflow.startBatch"
                   ? "StartBatchWorkflow"
+                  : name === "workflow.exportCandidatePackage"
+                    ? "ExportCandidatePackage"
                   : name === "workflow.cancelRun"
                     ? "CancelWorkflowRun"
                     : name === "workflow.resumeRun"
                       ? "ResumeWorkflowRun"
-                      : name === "workflow.retryStep"
-                        ? "RetryWorkflowStep"
-                        : name === "workflow.approveStep"
-                          ? "ApproveWorkflowStep"
-                          : name === "workflow.rejectStep"
-                            ? "RejectWorkflowStep"
+                    : name === "workflow.retryStep"
+                      ? "RetryWorkflowStep"
+                    : name === "workflow.approveStep"
+                      ? "ApproveWorkflowStep"
+                    : name === "workflow.rejectStep"
+                      ? "RejectWorkflowStep"
+                          : name === "workflowProfiles.create"
+                            ? "CreateWorkflowProfile"
+                            : name === "workflowProfiles.update"
+                              ? "UpdateWorkflowProfile"
+                              : name === "workflowProfiles.delete"
+                                ? "DeleteWorkflowProfile"
+                                : name === "workflowProfiles.run"
+                                  ? "RunWorkflowProfile"
+                                  : name === "schedules.create"
+                                    ? "CreateWorkflowSchedule"
+                                    : name === "schedules.update"
+                                      ? "UpdateWorkflowSchedule"
+                                      : name === "schedules.pause"
+                                        ? "PauseWorkflowSchedule"
+                                        : name === "schedules.resume"
+                                          ? "ResumeWorkflowSchedule"
+                                          : name === "schedules.delete"
+                                            ? "DeleteWorkflowSchedule"
                             : name === "brandKits.create"
                               ? "CreateBrandKit"
                               : name === "brandKits.update"
@@ -1523,6 +1565,55 @@ export class LocalApiController {
           snapshot.workflowRuns
             .find((run) => run.id === workflowInput.workflowRunId)
             ?.artifacts.find((artifact) => artifact.id === workflowInput.artifactId) ?? null
+        );
+      }
+      case "workflow.candidatePackages":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["workflow.candidatePackages"]
+          )
+        ).candidatePackages;
+      case "workflow.candidatePackage": {
+        const workflowInput = parsed as LocalApiQueryInputMap["workflow.candidatePackage"];
+        const snapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: workflowInput.directory
+        });
+        return (
+          snapshot.candidatePackages.find(
+            (candidatePackage) => candidatePackage.id === workflowInput.candidatePackageId
+          ) ?? null
+        );
+      }
+      case "workflowProfiles.list":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["workflowProfiles.list"]
+          )
+        ).workflowProfiles;
+      case "workflowProfiles.inspect": {
+        const workflowInput = parsed as LocalApiQueryInputMap["workflowProfiles.inspect"];
+        const snapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: workflowInput.directory
+        });
+        return (
+          snapshot.workflowProfiles.find((profile) => profile.id === workflowInput.profileId) ??
+          null
+        );
+      }
+      case "schedules.list":
+        return (
+          await this.worker.getWorkflowSessionSnapshot(
+            parsed as LocalApiQueryInputMap["schedules.list"]
+          )
+        ).schedules;
+      case "schedules.inspect": {
+        const workflowInput = parsed as LocalApiQueryInputMap["schedules.inspect"];
+        const snapshot = await this.worker.getWorkflowSessionSnapshot({
+          directory: workflowInput.directory
+        });
+        return (
+          snapshot.schedules.find((schedule) => schedule.id === workflowInput.scheduleId) ??
+          null
         );
       }
       case "brandKits.list":

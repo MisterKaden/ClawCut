@@ -209,6 +209,13 @@ Current event types:
 - `heartbeat`
 - `workflows.snapshot` when workflow state is changing
 
+Stage 11 extends the workflow event payload with:
+
+- reusable workflow profiles
+- local schedules
+- candidate packages
+- run-start and run-failure summaries resolved through the same workflow snapshot
+
 ## Preview inspection
 
 Automation callers can inspect current preview state with:
@@ -217,6 +224,16 @@ Automation callers can inspect current preview state with:
 - `preview.frame-snapshot`
 - `preview.frame-reference`
 - tool: `clawcut.capture_preview_frame`
+
+Stage 11 also adds higher-level reusable automation surfaces:
+
+- `workflowProfiles.list`
+- `workflowProfiles.inspect`
+- `workflowProfiles.run`
+- `schedules.list`
+- `schedules.inspect`
+- `workflow.candidatePackages`
+- `workflow.candidatePackage`
 
 `preview.frame-reference` is the cheap default for OpenClaw-style reasoning. It returns timing, clip identity, source mode, dimensions, and warning/error state without requiring inline image data.
 
